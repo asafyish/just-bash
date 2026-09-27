@@ -88,16 +88,17 @@ export class BridgeHandler {
         this.output.stderr += `\n${this.commandName}: execution timeout exceeded\n`;
         reject(new Error("Operation timed out"));
       }, remaining);
-      promise.then(
-        (v) => {
+      // Host-side settlement must still run after the sandbox is deactivated.
+      void (async () => {
+        try {
+          const value = await promise;
           _clearFiniteTimeout(timer);
-          resolve(v);
-        },
-        (e) => {
+          resolve(value);
+        } catch (error) {
           _clearFiniteTimeout(timer);
-          reject(e);
-        },
-      );
+          reject(error);
+        }
+      })();
     });
   }
 
