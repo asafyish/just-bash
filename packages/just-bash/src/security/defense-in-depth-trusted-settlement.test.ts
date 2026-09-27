@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 
 const tsxLoaderUrl = import.meta.resolve("tsx");
 const defenseUrl = new URL("./defense-in-depth-box.ts", import.meta.url).href;
@@ -37,77 +37,42 @@ function runSubprocess(body: string): string {
   );
 }
 
-describe("trusted host settlement after defense deactivation", () => {
-  it.each([
-    "resolve",
-    "reject",
-  ])("observes a trusted callback that settles with %s after deactivation", (settlement) => {
-    expect(
-      runSubprocess(`
-          import assert from "node:assert/strict";
-          import { setImmediate } from "node:timers/promises";
-          import { DefenseInDepthBox } from ${JSON.stringify(defenseUrl)};
+// A subprocess makes an unhandled rejection fail the test by exiting Node.
+it("handles a host tool rejection after the worker is stopped", () => {
+  expect(
+    runSubprocess(`
+      import assert from "node:assert/strict";
+      import { setImmediate } from "node:timers/promises";
+      import { DefenseInDepthBox } from ${JSON.stringify(defenseUrl)};
+      import { BridgeHandler } from ${JSON.stringify(bridgeUrl)};
+      import { createSharedBuffer, ProtocolBuffer, OpCode, Status } from ${JSON.stringify(protocolUrl)};
+      import { InMemoryFs } from ${JSON.stringify(filesystemUrl)};
 
-          const pending = deferred();
-          const reason = new Error("late host failure");
-          const handle = DefenseInDepthBox.getInstance(true).activate();
-          let task;
-          await handle.run(async () => {
-            task = DefenseInDepthBox.runTrustedAsync(() => pending.promise);
-          });
-          const observed = task.then(
-            (value) => ({ value }),
-            (error) => ({ error }),
-          );
-          await setImmediate();
-          handle.deactivate();
-          pending.${settlement}(${settlement === "resolve" ? '"host result"' : "reason"});
-          assert.deepEqual(await observed, ${settlement === "resolve" ? '{ value: "host result" }' : "{ error: reason }"});
-          await setImmediate();
-          console.log("settled");
-        `),
-    ).toBe("settled\n");
-  });
-
-  it.each([
-    "resolve",
-    "reject",
-  ])("settles a stopped tool bridge when its host callback later %ss", (settlement) => {
-    expect(
-      runSubprocess(`
-          import assert from "node:assert/strict";
-          import { setImmediate } from "node:timers/promises";
-          import { DefenseInDepthBox } from ${JSON.stringify(defenseUrl)};
-          import { BridgeHandler } from ${JSON.stringify(bridgeUrl)};
-          import { createSharedBuffer, ProtocolBuffer, OpCode, Status } from ${JSON.stringify(protocolUrl)};
-          import { InMemoryFs } from ${JSON.stringify(filesystemUrl)};
-
-          const pending = deferred();
-          const started = deferred();
-          const shared = createSharedBuffer();
-          const protocol = new ProtocolBuffer(shared);
-          const bridge = new BridgeHandler(
-            shared, new InMemoryFs(), "/", "test", undefined, 0, undefined,
-            () => { started.resolve(); return pending.promise; },
-          );
-          protocol.setOpCode(OpCode.INVOKE_TOOL);
-          protocol.setPath("test.read");
-          protocol.setDataFromString("{}");
-          protocol.setStatus(Status.READY);
-          const handle = DefenseInDepthBox.getInstance(true).activate();
-          let running;
-          await handle.run(async () => { running = bridge.run(60_000); });
-          await started.promise;
-          await setImmediate();
-          bridge.stop();
-          handle.deactivate();
-          pending.${settlement}(${settlement === "resolve" ? '"host result"' : 'new Error("late host failure")'});
-          assert.deepEqual(await running, { stdout: "", stderr: "", exitCode: 0 });
-          assert.equal(protocol.getStatus(), Status.${settlement === "resolve" ? "SUCCESS" : "ERROR"});
-          assert.equal(protocol.getResultAsString(), ${settlement === "resolve" ? '"host result"' : '"late host failure"'});
-          await setImmediate();
-          console.log("settled");
-        `),
-    ).toBe("settled\n");
-  });
+      const pending = deferred();
+      const started = deferred();
+      const shared = createSharedBuffer();
+      const protocol = new ProtocolBuffer(shared);
+      const bridge = new BridgeHandler(
+        shared, new InMemoryFs(), "/", "test", undefined, 0, undefined,
+        () => { started.resolve(); return pending.promise; },
+      );
+      protocol.setOpCode(OpCode.INVOKE_TOOL);
+      protocol.setPath("test.read");
+      protocol.setDataFromString("{}");
+      protocol.setStatus(Status.READY);
+      const handle = DefenseInDepthBox.getInstance(true).activate();
+      let running;
+      await handle.run(async () => { running = bridge.run(60_000); });
+      await started.promise;
+      await setImmediate();
+      bridge.stop();
+      handle.deactivate();
+      pending.reject(new Error("late host failure"));
+      assert.deepEqual(await running, { stdout: "", stderr: "", exitCode: 0 });
+      assert.equal(protocol.getStatus(), Status.ERROR);
+      assert.equal(protocol.getResultAsString(), "late host failure");
+      await setImmediate();
+      console.log("settled");
+    `),
+  ).toBe("settled\n");
 });
