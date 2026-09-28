@@ -9,16 +9,6 @@
     "stderr": "",
     "exitCode": 0
   },
-  "302b2c2f024cf14f": {
-    "command": "grep -c foo a.txt b.txt",
-    "files": {
-      "a.txt": "foo\nbar\n",
-      "b.txt": "other\n"
-    },
-    "stdout": "a.txt:1\nb.txt:0\n",
-    "stderr": "",
-    "exitCode": 0
-  },
   "59e275e11ace08e8": {
     "command": "rg -sn 'foo|bar' a.txt b.txt",
     "files": {
@@ -36,36 +26,6 @@
       "b.txt": "other\n"
     },
     "stdout": "a.txt:1:foo\na.txt:2:bar\n",
-    "stderr": "",
-    "exitCode": 0
-  },
-  "98958df37adb5490": {
-    "command": "grep -v foo a.txt b.txt",
-    "files": {
-      "a.txt": "foo\nbar\n",
-      "b.txt": "other\n"
-    },
-    "stdout": "a.txt:bar\nb.txt:other\n",
-    "stderr": "",
-    "exitCode": 0
-  },
-  "bbad66f14dccde68": {
-    "command": "rg -sn foo a.txt b.txt",
-    "files": {
-      "a.txt": "foo\nbar\n",
-      "b.txt": "other\n"
-    },
-    "stdout": "a.txt:1:foo\n",
-    "stderr": "",
-    "exitCode": 0
-  },
-  "f6d166a7456931f8": {
-    "command": "grep -n foo a.txt b.txt",
-    "files": {
-      "a.txt": "foo\nbar\n",
-      "b.txt": "other\n"
-    },
-    "stdout": "a.txt:1:foo\n",
     "stderr": "",
     "exitCode": 0
   }

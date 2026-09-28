@@ -209,6 +209,24 @@ describe("remote filesystem search", () => {
     expect(remote.batches).toEqual([]);
   });
 
+  it("releases successful and failed bulk reads before the next command", async () => {
+    const remote = remoteFs(
+      { "/a": "foo".repeat(10), "/b": "foo".repeat(10) },
+      { unreadable: "/b" },
+    );
+    const result = await new Bash({
+      fs: remote.fs,
+      executionLimits: { maxLiveBytes: 250 },
+    }).exec("rg -sq foo /a /b; rg -sq foo /a /b");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(remote.batches).toEqual([
+      ["/a", "/b"],
+      ["/a", "/b"],
+    ]);
+  });
+
   it("preserves rg matching for non-UTF8 bytes", async () => {
     const bytes = { "/a": new Uint8Array([0xe9, 10]) };
     const remote = remoteFs(bytes);

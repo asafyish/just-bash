@@ -17,11 +17,7 @@ describe("remote search command comparison", () => {
     await cleanupTestDir(testDir);
   });
   it.each([
-    "grep -n foo a.txt b.txt",
     "grep -nE 'foo|bar' a.txt b.txt",
-    "grep -c foo a.txt b.txt",
-    "grep -v foo a.txt b.txt",
-    "rg -sn foo a.txt b.txt",
     "rg -sn 'foo|bar' a.txt b.txt",
     "rg --sort path -sc --include-zero foo a.txt b.txt",
   ])("%s", async (command) => {

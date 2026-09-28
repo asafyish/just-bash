@@ -1094,7 +1094,7 @@ function decodeFileContent(
   return { content, isBinary: content.slice(0, 8192).includes("\0") };
 }
 
-/** Reserve before fetching; one lease owns the buffers for the entire batch. */
+/** Bulk reads return the same per-file contents and leases as ordinary reads. */
 async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
   const paths = files.map((file) => ctx.fs.resolvePath(ctx.cwd, file));
   const prepared = await Promise.allSettled(
@@ -1114,7 +1114,6 @@ async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
   const readable = prepared.flatMap((result, index) =>
     result.status === "fulfilled" ? [{ ...result.value, index }] : [],
   );
-  const lease = compositeLease(...readable.map((file) => file.lease));
   try {
     for (const result of prepared) {
       if (result.status === "rejected")
@@ -1131,18 +1130,22 @@ async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
       try {
         const read = reads[index];
         if (read.status === "rejected") throw read.reason;
-        contents[file.index] = decodeFileContent(
-          ctx,
-          bytesFromUint8Array(read.value, ctx.limits.maxStringLength),
-          file.size,
-        );
+        contents[file.index] = {
+          ...decodeFileContent(
+            ctx,
+            bytesFromUint8Array(read.value, ctx.limits.maxStringLength),
+            file.size,
+          ),
+          lease: file.lease,
+        };
       } catch (error) {
+        file.lease?.release();
         rethrowFatalExecutionError(error);
       }
     }
-    return { contents, lease };
+    return contents;
   } catch (error) {
-    lease?.release();
+    for (const file of readable) file.lease?.release();
     throw error;
   }
 }
@@ -1236,178 +1239,173 @@ async function searchFiles(
       ctx.fs.readMany && ordinaryFiles && batch.length
         ? await readFileBatch(ctx, batch)
         : undefined;
-    try {
-      const results = await Promise.all(
-        batch.map(async (file, index) => {
-          const fileData = bulk
-            ? bulk.contents[index]
-            : await readFileContent(
-                ctx,
-                ctx.fs.resolvePath(ctx.cwd, file),
-                file,
-                options,
-              );
-
-          if (!fileData) return null;
-
-          const { content, isBinary, lease } = fileData;
-          bytesSearched += content.length;
-
-          // Skip binary files unless -a/--text is specified.
-          if (isBinary && !options.searchBinary) {
-            lease?.release();
-            return null;
-          }
-
-          const filenameForSearch =
-            showFilename && !options.heading ? file : "";
-          try {
-            const result = searchContent(content, regex, {
-              invertMatch: options.invertMatch,
-              showLineNumbers: effectiveLineNumbers,
-              countOnly: options.count,
-              countMatches: options.countMatches,
-              filename: filenameForSearch,
-              onlyMatching: options.onlyMatching,
-              beforeContext: options.beforeContext,
-              afterContext: options.afterContext,
-              maxCount: options.maxCount,
-              contextSeparator: options.contextSeparator,
-              showColumn: options.column,
-              vimgrep: options.vimgrep,
-              showByteOffset: options.byteOffset,
-              replace:
-                options.replace !== null
-                  ? convertReplacement(options.replace)
-                  : null,
-              passthru: options.passthru,
-              multiline: options.multiline,
-              kResetGroup,
-              maxWork: ctx.limits.maxLoopIterations,
-              maxMatches: ctx.limits.maxArrayElements,
-              signal: ctx.signal,
-            });
-
-            // JSON formatting below needs the source after this task ends, so
-            // transfer lease ownership with the returned batch item.
-            if (options.json && result.matched) {
-              return { file, result, content, isBinary: false, lease };
-            }
-
-            lease?.release();
-            return { file, result };
-          } catch (error) {
-            lease?.release();
-            throw error;
-          }
-        }),
-      );
-
-      for (const res of results) {
-        if (!res) continue;
-
-        const { file, result } = res;
-
-        if (result.matched) {
-          anyMatch = true;
-          filesWithMatch++;
-          totalMatches += result.matchCount;
-
-          if (options.quiet && !options.json) {
-            // Quiet mode without JSON: exit early on first match
-            break outer;
-          }
-
-          if (options.json && !options.quiet) {
-            // JSON mode without quiet: output begin/match/end messages
-            const content = (res as { content?: string }).content || "";
-            jsonMessages.push(
-              JSON.stringify({ type: "begin", data: { path: { text: file } } }),
+    const results = await Promise.all(
+      batch.map(async (file, index) => {
+        const fileData = bulk
+          ? bulk[index]
+          : await readFileContent(
+              ctx,
+              ctx.fs.resolvePath(ctx.cwd, file),
+              file,
+              options,
             );
 
-            // Find matches and output them
-            const lines = content.split("\n");
+        if (!fileData) return null;
+
+        const { content, isBinary, lease } = fileData;
+        bytesSearched += content.length;
+
+        // Skip binary files unless -a/--text is specified.
+        if (isBinary && !options.searchBinary) {
+          lease?.release();
+          return null;
+        }
+
+        const filenameForSearch = showFilename && !options.heading ? file : "";
+        try {
+          const result = searchContent(content, regex, {
+            invertMatch: options.invertMatch,
+            showLineNumbers: effectiveLineNumbers,
+            countOnly: options.count,
+            countMatches: options.countMatches,
+            filename: filenameForSearch,
+            onlyMatching: options.onlyMatching,
+            beforeContext: options.beforeContext,
+            afterContext: options.afterContext,
+            maxCount: options.maxCount,
+            contextSeparator: options.contextSeparator,
+            showColumn: options.column,
+            vimgrep: options.vimgrep,
+            showByteOffset: options.byteOffset,
+            replace:
+              options.replace !== null
+                ? convertReplacement(options.replace)
+                : null,
+            passthru: options.passthru,
+            multiline: options.multiline,
+            kResetGroup,
+            maxWork: ctx.limits.maxLoopIterations,
+            maxMatches: ctx.limits.maxArrayElements,
+            signal: ctx.signal,
+          });
+
+          // JSON formatting below needs the source after this task ends, so
+          // transfer lease ownership with the returned batch item.
+          if (options.json && result.matched) {
+            return { file, result, content, isBinary: false, lease };
+          }
+
+          lease?.release();
+          return { file, result };
+        } catch (error) {
+          lease?.release();
+          throw error;
+        }
+      }),
+    );
+
+    for (const res of results) {
+      if (!res) continue;
+
+      const { file, result } = res;
+
+      if (result.matched) {
+        anyMatch = true;
+        filesWithMatch++;
+        totalMatches += result.matchCount;
+
+        if (options.quiet && !options.json) {
+          // Quiet mode without JSON: exit early on first match
+          break outer;
+        }
+
+        if (options.json && !options.quiet) {
+          // JSON mode without quiet: output begin/match/end messages
+          const content = (res as { content?: string }).content || "";
+          jsonMessages.push(
+            JSON.stringify({ type: "begin", data: { path: { text: file } } }),
+          );
+
+          // Find matches and output them
+          const lines = content.split("\n");
+          regex.lastIndex = 0;
+          let lineOffset = 0;
+          for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+            const line = lines[lineIdx];
             regex.lastIndex = 0;
-            let lineOffset = 0;
-            for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-              const line = lines[lineIdx];
-              regex.lastIndex = 0;
-              const submatches: JsonSubmatch[] = [];
+            const submatches: JsonSubmatch[] = [];
 
-              for (
-                let match = regex.exec(line);
-                match !== null;
-                match = regex.exec(line)
-              ) {
-                const submatch: JsonSubmatch = {
-                  match: { text: match[0] },
-                  start: match.index,
-                  end: match.index + match[0].length,
-                };
-                if (options.replace !== null) {
-                  submatch.replacement = { text: options.replace };
-                }
-                submatches.push(submatch);
-                if (match[0].length === 0) regex.lastIndex++;
+            for (
+              let match = regex.exec(line);
+              match !== null;
+              match = regex.exec(line)
+            ) {
+              const submatch: JsonSubmatch = {
+                match: { text: match[0] },
+                start: match.index,
+                end: match.index + match[0].length,
+              };
+              if (options.replace !== null) {
+                submatch.replacement = { text: options.replace };
               }
-
-              if (submatches.length > 0) {
-                const matchMsg: JsonMatch = {
-                  type: "match",
-                  data: {
-                    path: { text: file },
-                    lines: { text: `${line}\n` },
-                    line_number: lineIdx + 1,
-                    absolute_offset: lineOffset,
-                    submatches,
-                  },
-                };
-                jsonMessages.push(JSON.stringify(matchMsg));
-              }
-              lineOffset += line.length + 1;
+              submatches.push(submatch);
+              if (match[0].length === 0) regex.lastIndex++;
             }
 
-            jsonMessages.push(
-              JSON.stringify({
-                type: "end",
+            if (submatches.length > 0) {
+              const matchMsg: JsonMatch = {
+                type: "match",
                 data: {
                   path: { text: file },
-                  binary_offset: null,
-                  stats: {
-                    elapsed: { secs: 0, nanos: 0, human: "0s" },
-                    searches: 1,
-                    searches_with_match: 1,
-                    bytes_searched: content.length,
-                    bytes_printed: 0,
-                    matched_lines: result.matchCount,
-                    matches: result.matchCount,
-                  },
+                  lines: { text: `${line}\n` },
+                  line_number: lineIdx + 1,
+                  absolute_offset: lineOffset,
+                  submatches,
                 },
-              }),
-            );
-          } else if (options.filesWithMatches) {
-            const sep = options.nullSeparator ? "\0" : "\n";
-            stdout += `${file}${sep}`;
-          } else if (!options.filesWithoutMatch) {
-            // In heading mode, always show filename header (even for single files)
-            if (options.heading && !options.noFilename) {
-              stdout += `${file}\n`;
+              };
+              jsonMessages.push(JSON.stringify(matchMsg));
             }
-            stdout += result.output;
+            lineOffset += line.length + 1;
           }
-        } else if (options.filesWithoutMatch) {
+
+          jsonMessages.push(
+            JSON.stringify({
+              type: "end",
+              data: {
+                path: { text: file },
+                binary_offset: null,
+                stats: {
+                  elapsed: { secs: 0, nanos: 0, human: "0s" },
+                  searches: 1,
+                  searches_with_match: 1,
+                  bytes_searched: content.length,
+                  bytes_printed: 0,
+                  matched_lines: result.matchCount,
+                  matches: result.matchCount,
+                },
+              },
+            }),
+          );
+        } else if (options.filesWithMatches) {
           const sep = options.nullSeparator ? "\0" : "\n";
           stdout += `${file}${sep}`;
-        } else if (
-          options.includeZero &&
-          (options.count || options.countMatches)
-        ) {
+        } else if (!options.filesWithoutMatch) {
+          // In heading mode, always show filename header (even for single files)
+          if (options.heading && !options.noFilename) {
+            stdout += `${file}\n`;
+          }
           stdout += result.output;
         }
-        (res as { lease?: ResourceLease }).lease?.release();
+      } else if (options.filesWithoutMatch) {
+        const sep = options.nullSeparator ? "\0" : "\n";
+        stdout += `${file}${sep}`;
+      } else if (
+        options.includeZero &&
+        (options.count || options.countMatches)
+      ) {
+        stdout += result.output;
       }
-    } finally {
-      bulk?.lease?.release();
+      (res as { lease?: ResourceLease }).lease?.release();
     }
   }
 
