@@ -38,7 +38,7 @@ function runSubprocess(body: string): string {
 }
 
 // A subprocess makes an unhandled rejection fail the test by exiting Node.
-it("handles a host tool rejection after the worker is stopped", () => {
+it("handles a host tool rejection after the bridge is stopped", () => {
   expect(
     runSubprocess(`
       import assert from "node:assert/strict";

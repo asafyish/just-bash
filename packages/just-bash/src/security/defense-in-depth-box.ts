@@ -757,7 +757,8 @@ export class DefenseInDepthBox {
     const current = executionContext.getStore();
     if (!current) return fn();
     const { executionId } = current;
-    // Avoid implicit promise adoption through the guarded .then.
+    // Return the value, not the promise: adopting it would go through the
+    // patched Promise.prototype.then, which is blocked after deactivation.
     return await executionContext.run(
       { ...current, trusted: true, forceUntrusted: false },
       async () => {
