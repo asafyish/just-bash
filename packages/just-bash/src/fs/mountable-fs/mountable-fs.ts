@@ -11,6 +11,7 @@ import type {
   MkdirOptions,
   ReadFileOptions,
   RmOptions,
+  SearchCandidatesRequest,
   WriteFileOptions,
 } from "../interface.js";
 import {
@@ -22,6 +23,7 @@ import {
   resolvePath,
   validatePath,
 } from "../path-utils.js";
+import { readBatch } from "../read-many.js";
 
 /**
  * Configuration for a mount point
@@ -247,6 +249,51 @@ export class MountableFs implements IFileSystem {
   }
 
   // ==================== IFileSystem Implementation ====================
+
+  private groupPaths(paths: readonly string[]) {
+    const groups = new Map<IFileSystem, { path: string; index: number }[]>();
+    for (const [index, path] of paths.entries()) {
+      const { fs, relativePath } = this.routePath(path);
+      const group = groups.get(fs);
+      const entry = { path: relativePath, index };
+      if (group) group.push(entry);
+      else groups.set(fs, [entry]);
+    }
+    return groups;
+  }
+
+  async readMany(
+    paths: readonly string[],
+    options?: { signal?: AbortSignal },
+  ): Promise<readonly PromiseSettledResult<Uint8Array>[]> {
+    const results: PromiseSettledResult<Uint8Array>[] = new Array(paths.length);
+    for (const [fs, entries] of this.groupPaths(paths)) {
+      const reads = await readBatch(
+        fs,
+        entries.map((entry) => entry.path),
+        options?.signal,
+      );
+      for (const [index, entry] of entries.entries())
+        results[entry.index] = reads[index];
+    }
+    return results;
+  }
+
+  async searchCandidates(
+    request: SearchCandidatesRequest,
+  ): Promise<readonly string[]> {
+    const selected = new Set<number>();
+    for (const [fs, entries] of this.groupPaths(request.paths)) {
+      request.signal?.throwIfAborted();
+      const paths = entries.map((entry) => entry.path);
+      const candidates = await fs.searchCandidates?.({ ...request, paths });
+      const keep = candidates === undefined ? undefined : new Set(candidates);
+      for (const entry of entries) {
+        if (!keep || keep.has(entry.path)) selected.add(entry.index);
+      }
+    }
+    return request.paths.filter((_, index) => selected.has(index));
+  }
 
   async readFile(
     path: string,

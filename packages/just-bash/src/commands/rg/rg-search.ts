@@ -5,6 +5,8 @@
 import { gunzipSync } from "node:zlib";
 import { BoundedStringBuilder } from "../../bounded-builder.js";
 import {
+  type ByteString,
+  bytesFromUint8Array,
   decodeBytesToUtf8,
   latin1FromBytes,
   readBytesFrom,
@@ -13,17 +15,20 @@ import {
 } from "../../encoding.js";
 import type { ResourceLease } from "../../execution-scope.js";
 import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
+import { readBatch } from "../../fs/read-many.js";
 import { FileTraversalBudget } from "../../fs/traversal.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import { createUserRegex, type UserRegex } from "../../regex/index.js";
 import type { ExecResult, RuntimeCommandContext } from "../../types.js";
+import { getCandidates } from "../search-engine/file-batch.js";
 import {
   buildRegex,
   convertReplacement,
   type RegexResult,
   searchContent,
 } from "../search-engine/index.js";
+import type { PreFilter } from "../search-engine/regex.js";
 import { FileTypeRegistry } from "./file-types.js";
 import { GitignoreManager, loadGitignores } from "./gitignore.js";
 import type { RgOptions } from "./rg-options.js";
@@ -166,6 +171,7 @@ export async function executeSearch(
   let aggregatePatternInputBytes = 0;
   let regex: UserRegex;
   let kResetGroup: number | undefined;
+  let preFilter: PreFilter | undefined;
   try {
     // Read patterns from files (-f/--file). Patterns are regex source — decode
     // bytes to UTF-8 so unicode-class patterns work. Scan incrementally instead
@@ -252,6 +258,7 @@ export async function executeSearch(
       );
       regex = regexResult.regex;
       kResetGroup = regexResult.kResetGroup;
+      preFilter = regexResult.preFilter;
     } catch {
       return {
         stdout: "",
@@ -388,6 +395,7 @@ export async function executeSearch(
     showFilename,
     effectiveLineNumbers,
     kResetGroup,
+    preFilter,
   );
 }
 
@@ -1055,29 +1063,87 @@ async function readFileContent(
 
     // Regular file read
     const stat = await ctx.fs.stat(filePath);
-    // A filesystem read can transiently retain its byte buffer while creating
-    // the decoded string, so account for both representations prospectively.
     lease = ctx.executionScope?.reserveBytes(
       "rg file text",
       stat.size * 2,
       "rg",
     );
     const rawContent = await readBytesFrom(ctx.fs, filePath);
-    const contentBytes = latin1FromBytes(rawContent).length;
-    if (contentBytes > stat.size) {
-      throw new ExecutionLimitError(
-        "rg: file grew while being read",
-        "string_length",
-      );
-    }
-    ctx.executionScope?.consumeInput(contentBytes, "rg");
-    const content = decodeBytesToUtf8(rawContent, ctx.limits.maxStringLength);
-    const sample = content.slice(0, 8192);
-    return { content, isBinary: sample.includes("\0"), lease };
+    return { ...decodeFileContent(ctx, rawContent, stat.size), lease };
   } catch (error) {
     lease?.release();
     rethrowFatalExecutionError(error);
     return null;
+  }
+}
+
+function decodeFileContent(
+  ctx: RuntimeCommandContext,
+  rawContent: ByteString,
+  size: number,
+) {
+  const contentBytes = latin1FromBytes(rawContent).length;
+  if (contentBytes > size) {
+    throw new ExecutionLimitError(
+      "rg: file grew while being read",
+      "string_length",
+    );
+  }
+  ctx.executionScope?.consumeInput(contentBytes, "rg");
+  const content = decodeBytesToUtf8(rawContent, ctx.limits.maxStringLength);
+  return { content, isBinary: content.slice(0, 8192).includes("\0") };
+}
+
+/** Reserve before fetching; one lease owns the buffers for the entire batch. */
+async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
+  const paths = files.map((file) => ctx.fs.resolvePath(ctx.cwd, file));
+  const prepared = await Promise.allSettled(
+    paths.map(async (path) => {
+      const stat = await ctx.fs.stat(path);
+      return {
+        size: stat.size,
+        // Bulk buffers coexist with the byte string and decoded text.
+        lease: ctx.executionScope?.reserveBytes(
+          "rg file text",
+          stat.size * 3,
+          "rg",
+        ),
+      };
+    }),
+  );
+  const readable = prepared.flatMap((result, index) =>
+    result.status === "fulfilled" ? [{ ...result.value, index }] : [],
+  );
+  const lease = compositeLease(...readable.map((file) => file.lease));
+  try {
+    for (const result of prepared) {
+      if (result.status === "rejected")
+        rethrowFatalExecutionError(result.reason);
+    }
+    const reads = await readBatch(
+      ctx.fs,
+      readable.map((file) => paths[file.index]),
+      ctx.signal,
+    );
+    const contents: Array<Awaited<ReturnType<typeof readFileContent>>> =
+      files.map(() => null);
+    for (const [index, file] of readable.entries()) {
+      try {
+        const read = reads[index];
+        if (read.status === "rejected") throw read.reason;
+        contents[file.index] = decodeFileContent(
+          ctx,
+          bytesFromUint8Array(read.value, ctx.limits.maxStringLength),
+          file.size,
+        );
+      } catch (error) {
+        rethrowFatalExecutionError(error);
+      }
+    }
+    return { contents, lease };
+  } catch (error) {
+    lease?.release();
+    throw error;
   }
 }
 
@@ -1127,6 +1193,7 @@ async function searchFiles(
   showFilename: boolean,
   effectiveLineNumbers: boolean,
   kResetGroup?: number,
+  preFilter?: PreFilter,
 ): Promise<ExecResult> {
   let stdout = "";
   let anyMatch = false;
@@ -1141,169 +1208,206 @@ async function searchFiles(
   // string while being searched. Keep their concurrency deliberately small.
   const BATCH_SIZE = options.searchZip ? 2 : 50;
   outer: for (let i = 0; i < files.length; i += BATCH_SIZE) {
-    const batch = files.slice(i, i + BATCH_SIZE);
+    let batch = files.slice(i, i + BATCH_SIZE);
+    const ordinaryFiles = !options.searchZip && !options.preprocessor;
+    const canPrune =
+      ordinaryFiles &&
+      !options.invertMatch &&
+      !options.filesWithoutMatch &&
+      !options.count &&
+      !options.countMatches &&
+      !options.passthru &&
+      !options.json &&
+      !options.stats;
+    if (canPrune && ctx.fs.searchCandidates) {
+      const candidates = await getCandidates(
+        ctx.fs,
+        batch.map((file) => ctx.fs.resolvePath(ctx.cwd, file)),
+        preFilter,
+        ctx.signal,
+      );
+      if (candidates) {
+        batch = batch.filter((file) =>
+          candidates.has(ctx.fs.resolvePath(ctx.cwd, file)),
+        );
+      }
+    }
+    const bulk =
+      ctx.fs.readMany && ordinaryFiles && batch.length
+        ? await readFileBatch(ctx, batch)
+        : undefined;
+    try {
+      const results = await Promise.all(
+        batch.map(async (file, index) => {
+          const fileData = bulk
+            ? bulk.contents[index]
+            : await readFileContent(
+                ctx,
+                ctx.fs.resolvePath(ctx.cwd, file),
+                file,
+                options,
+              );
 
-    const results = await Promise.all(
-      batch.map(async (file) => {
-        const filePath = ctx.fs.resolvePath(ctx.cwd, file);
-        const fileData = await readFileContent(ctx, filePath, file, options);
+          if (!fileData) return null;
 
-        if (!fileData) return null;
+          const { content, isBinary, lease } = fileData;
+          bytesSearched += content.length;
 
-        const { content, isBinary, lease } = fileData;
-        bytesSearched += content.length;
-
-        // Skip binary files unless -a/--text is specified.
-        if (isBinary && !options.searchBinary) {
-          lease?.release();
-          return null;
-        }
-
-        const filenameForSearch = showFilename && !options.heading ? file : "";
-        try {
-          const result = searchContent(content, regex, {
-            invertMatch: options.invertMatch,
-            showLineNumbers: effectiveLineNumbers,
-            countOnly: options.count,
-            countMatches: options.countMatches,
-            filename: filenameForSearch,
-            onlyMatching: options.onlyMatching,
-            beforeContext: options.beforeContext,
-            afterContext: options.afterContext,
-            maxCount: options.maxCount,
-            contextSeparator: options.contextSeparator,
-            showColumn: options.column,
-            vimgrep: options.vimgrep,
-            showByteOffset: options.byteOffset,
-            replace:
-              options.replace !== null
-                ? convertReplacement(options.replace)
-                : null,
-            passthru: options.passthru,
-            multiline: options.multiline,
-            kResetGroup,
-            maxWork: ctx.limits.maxLoopIterations,
-            maxMatches: ctx.limits.maxArrayElements,
-            signal: ctx.signal,
-          });
-
-          // JSON formatting below needs the source after this task ends, so
-          // transfer lease ownership with the returned batch item.
-          if (options.json && result.matched) {
-            return { file, result, content, isBinary: false, lease };
+          // Skip binary files unless -a/--text is specified.
+          if (isBinary && !options.searchBinary) {
+            lease?.release();
+            return null;
           }
 
-          lease?.release();
-          return { file, result };
-        } catch (error) {
-          lease?.release();
-          throw error;
-        }
-      }),
-    );
+          const filenameForSearch =
+            showFilename && !options.heading ? file : "";
+          try {
+            const result = searchContent(content, regex, {
+              invertMatch: options.invertMatch,
+              showLineNumbers: effectiveLineNumbers,
+              countOnly: options.count,
+              countMatches: options.countMatches,
+              filename: filenameForSearch,
+              onlyMatching: options.onlyMatching,
+              beforeContext: options.beforeContext,
+              afterContext: options.afterContext,
+              maxCount: options.maxCount,
+              contextSeparator: options.contextSeparator,
+              showColumn: options.column,
+              vimgrep: options.vimgrep,
+              showByteOffset: options.byteOffset,
+              replace:
+                options.replace !== null
+                  ? convertReplacement(options.replace)
+                  : null,
+              passthru: options.passthru,
+              multiline: options.multiline,
+              kResetGroup,
+              maxWork: ctx.limits.maxLoopIterations,
+              maxMatches: ctx.limits.maxArrayElements,
+              signal: ctx.signal,
+            });
 
-    for (const res of results) {
-      if (!res) continue;
-
-      const { file, result } = res;
-
-      if (result.matched) {
-        anyMatch = true;
-        filesWithMatch++;
-        totalMatches += result.matchCount;
-
-        if (options.quiet && !options.json) {
-          // Quiet mode without JSON: exit early on first match
-          break outer;
-        }
-
-        if (options.json && !options.quiet) {
-          // JSON mode without quiet: output begin/match/end messages
-          const content = (res as { content?: string }).content || "";
-          jsonMessages.push(
-            JSON.stringify({ type: "begin", data: { path: { text: file } } }),
-          );
-
-          // Find matches and output them
-          const lines = content.split("\n");
-          regex.lastIndex = 0;
-          let lineOffset = 0;
-          for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
-            const line = lines[lineIdx];
-            regex.lastIndex = 0;
-            const submatches: JsonSubmatch[] = [];
-
-            for (
-              let match = regex.exec(line);
-              match !== null;
-              match = regex.exec(line)
-            ) {
-              const submatch: JsonSubmatch = {
-                match: { text: match[0] },
-                start: match.index,
-                end: match.index + match[0].length,
-              };
-              if (options.replace !== null) {
-                submatch.replacement = { text: options.replace };
-              }
-              submatches.push(submatch);
-              if (match[0].length === 0) regex.lastIndex++;
+            // JSON formatting below needs the source after this task ends, so
+            // transfer lease ownership with the returned batch item.
+            if (options.json && result.matched) {
+              return { file, result, content, isBinary: false, lease };
             }
 
-            if (submatches.length > 0) {
-              const matchMsg: JsonMatch = {
-                type: "match",
+            lease?.release();
+            return { file, result };
+          } catch (error) {
+            lease?.release();
+            throw error;
+          }
+        }),
+      );
+
+      for (const res of results) {
+        if (!res) continue;
+
+        const { file, result } = res;
+
+        if (result.matched) {
+          anyMatch = true;
+          filesWithMatch++;
+          totalMatches += result.matchCount;
+
+          if (options.quiet && !options.json) {
+            // Quiet mode without JSON: exit early on first match
+            break outer;
+          }
+
+          if (options.json && !options.quiet) {
+            // JSON mode without quiet: output begin/match/end messages
+            const content = (res as { content?: string }).content || "";
+            jsonMessages.push(
+              JSON.stringify({ type: "begin", data: { path: { text: file } } }),
+            );
+
+            // Find matches and output them
+            const lines = content.split("\n");
+            regex.lastIndex = 0;
+            let lineOffset = 0;
+            for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+              const line = lines[lineIdx];
+              regex.lastIndex = 0;
+              const submatches: JsonSubmatch[] = [];
+
+              for (
+                let match = regex.exec(line);
+                match !== null;
+                match = regex.exec(line)
+              ) {
+                const submatch: JsonSubmatch = {
+                  match: { text: match[0] },
+                  start: match.index,
+                  end: match.index + match[0].length,
+                };
+                if (options.replace !== null) {
+                  submatch.replacement = { text: options.replace };
+                }
+                submatches.push(submatch);
+                if (match[0].length === 0) regex.lastIndex++;
+              }
+
+              if (submatches.length > 0) {
+                const matchMsg: JsonMatch = {
+                  type: "match",
+                  data: {
+                    path: { text: file },
+                    lines: { text: `${line}\n` },
+                    line_number: lineIdx + 1,
+                    absolute_offset: lineOffset,
+                    submatches,
+                  },
+                };
+                jsonMessages.push(JSON.stringify(matchMsg));
+              }
+              lineOffset += line.length + 1;
+            }
+
+            jsonMessages.push(
+              JSON.stringify({
+                type: "end",
                 data: {
                   path: { text: file },
-                  lines: { text: `${line}\n` },
-                  line_number: lineIdx + 1,
-                  absolute_offset: lineOffset,
-                  submatches,
+                  binary_offset: null,
+                  stats: {
+                    elapsed: { secs: 0, nanos: 0, human: "0s" },
+                    searches: 1,
+                    searches_with_match: 1,
+                    bytes_searched: content.length,
+                    bytes_printed: 0,
+                    matched_lines: result.matchCount,
+                    matches: result.matchCount,
+                  },
                 },
-              };
-              jsonMessages.push(JSON.stringify(matchMsg));
+              }),
+            );
+          } else if (options.filesWithMatches) {
+            const sep = options.nullSeparator ? "\0" : "\n";
+            stdout += `${file}${sep}`;
+          } else if (!options.filesWithoutMatch) {
+            // In heading mode, always show filename header (even for single files)
+            if (options.heading && !options.noFilename) {
+              stdout += `${file}\n`;
             }
-            lineOffset += line.length + 1;
+            stdout += result.output;
           }
-
-          jsonMessages.push(
-            JSON.stringify({
-              type: "end",
-              data: {
-                path: { text: file },
-                binary_offset: null,
-                stats: {
-                  elapsed: { secs: 0, nanos: 0, human: "0s" },
-                  searches: 1,
-                  searches_with_match: 1,
-                  bytes_searched: content.length,
-                  bytes_printed: 0,
-                  matched_lines: result.matchCount,
-                  matches: result.matchCount,
-                },
-              },
-            }),
-          );
-        } else if (options.filesWithMatches) {
+        } else if (options.filesWithoutMatch) {
           const sep = options.nullSeparator ? "\0" : "\n";
           stdout += `${file}${sep}`;
-        } else if (!options.filesWithoutMatch) {
-          // In heading mode, always show filename header (even for single files)
-          if (options.heading && !options.noFilename) {
-            stdout += `${file}\n`;
-          }
+        } else if (
+          options.includeZero &&
+          (options.count || options.countMatches)
+        ) {
           stdout += result.output;
         }
-      } else if (options.filesWithoutMatch) {
-        const sep = options.nullSeparator ? "\0" : "\n";
-        stdout += `${file}${sep}`;
-      } else if (
-        options.includeZero &&
-        (options.count || options.countMatches)
-      ) {
-        stdout += result.output;
+        (res as { lease?: ResourceLease }).lease?.release();
       }
-      (res as { lease?: ResourceLease }).lease?.release();
+    } finally {
+      bulk?.lease?.release();
     }
   }
 
