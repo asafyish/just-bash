@@ -33,6 +33,34 @@ describe("mounted search capabilities", () => {
     ]);
   });
 
+  it("keeps ordinary mount reads within the existing memory budget", async () => {
+    const fs = new MountableFs({
+      mounts: [
+        {
+          mountPoint: "/local",
+          filesystem: new InMemoryFs({ "/a": "a".repeat(30) }),
+        },
+      ],
+    });
+    const remote = remoteFs({ "/a": "foo" });
+    fs.mount("/remote", remote.fs);
+    expect(fs.readMany).toBeDefined();
+    fs.unmount("/remote");
+    expect(fs.readMany).toBeUndefined();
+    const result = await new Bash({
+      fs,
+      executionLimits: { maxLiveBytes: 70, maxInputBytes: 1000 },
+    }).exec("rg -q a /local/a");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+    expect(
+      await new MountableFs({ base: remote.fs }).readMany?.(["/a"]),
+    ).toEqual([
+      { status: "fulfilled", value: new TextEncoder().encode("foo") },
+    ]);
+  });
+
   it("keeps per-path results and duplicate aliases when a backend is mounted twice", async () => {
     const remote = remoteFs({ "/a": "foo\n" });
     const fs = new MountableFs({
@@ -41,10 +69,11 @@ describe("mounted search capabilities", () => {
         { mountPoint: "/two", filesystem: remote.fs },
       ],
     });
-    const paths = ["/two/a", "/one/missing", "/one/a"];
-    const results = await fs.readMany(paths);
-    expect(results.map((result) => result.status)).toEqual([
+    const paths = ["/two/a", "/one/missing", "/bad\0", "/one/a"];
+    const results = await fs.readMany?.(paths);
+    expect(results?.map((result) => result.status)).toEqual([
       "fulfilled",
+      "rejected",
       "rejected",
       "fulfilled",
     ]);

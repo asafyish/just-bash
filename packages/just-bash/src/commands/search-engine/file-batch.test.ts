@@ -48,7 +48,13 @@ describe("search batch boundaries", () => {
   it("uses ordinary reads if bulk reads are absent", async () => {
     const { fs } = remoteFs({ "/a": "foo" });
     fs.readMany = undefined;
-    expect(await readBatch(fs, ["/a", "/missing"])).toEqual([
+    const read = fs.readFileBuffer.bind(fs);
+    fs.readFileBuffer = (path) => {
+      if (path === "/invalid") throw new Error("invalid path");
+      return read(path);
+    };
+    expect(await readBatch(fs, ["/invalid", "/a", "/missing"])).toEqual([
+      { status: "rejected", reason: new Error("invalid path") },
       { status: "fulfilled", value: new TextEncoder().encode("foo") },
       { status: "rejected", reason: expect.any(Error) },
     ]);

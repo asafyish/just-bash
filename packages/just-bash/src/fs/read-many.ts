@@ -9,7 +9,9 @@ export async function readBatch(
   if (!paths.length) return [];
   const results = fs.readMany
     ? await fs.readMany(paths, { signal })
-    : await Promise.allSettled(paths.map((path) => fs.readFileBuffer(path)));
+    : await Promise.allSettled(
+        paths.map(async (path) => fs.readFileBuffer(path)),
+      );
   signal?.throwIfAborted();
   if (results.length !== paths.length) {
     throw new Error("readMany must return one result per input path");

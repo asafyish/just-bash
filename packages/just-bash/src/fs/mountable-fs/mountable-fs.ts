@@ -250,24 +250,42 @@ export class MountableFs implements IFileSystem {
 
   // ==================== IFileSystem Implementation ====================
 
-  private groupPaths(paths: readonly string[]) {
+  private groupPaths(
+    paths: readonly string[],
+    onError: (index: number, reason: unknown) => void,
+  ) {
     const groups = new Map<IFileSystem, { path: string; index: number }[]>();
     for (const [index, path] of paths.entries()) {
-      const { fs, relativePath } = this.routePath(path);
-      const group = groups.get(fs);
-      const entry = { path: relativePath, index };
-      if (group) group.push(entry);
-      else groups.set(fs, [entry]);
+      try {
+        const { fs, relativePath } = this.routePath(path);
+        const group = groups.get(fs);
+        const entry = { path: relativePath, index };
+        if (group) group.push(entry);
+        else groups.set(fs, [entry]);
+      } catch (reason) {
+        onError(index, reason);
+      }
     }
     return groups;
   }
 
-  async readMany(
+  get readMany(): IFileSystem["readMany"] {
+    if (this.baseFs.readMany) return this.readMountedBatch;
+    for (const { filesystem } of this.mounts.values()) {
+      if (filesystem.readMany) return this.readMountedBatch;
+    }
+    return undefined;
+  }
+
+  private async readMountedBatch(
     paths: readonly string[],
     options?: { signal?: AbortSignal },
   ): Promise<readonly PromiseSettledResult<Uint8Array>[]> {
     const results: PromiseSettledResult<Uint8Array>[] = new Array(paths.length);
-    for (const [fs, entries] of this.groupPaths(paths)) {
+    const groups = this.groupPaths(paths, (index, reason) => {
+      results[index] = { status: "rejected", reason };
+    });
+    for (const [fs, entries] of groups) {
       const reads = await readBatch(
         fs,
         entries.map((entry) => entry.path),
@@ -283,7 +301,10 @@ export class MountableFs implements IFileSystem {
     request: SearchCandidatesRequest,
   ): Promise<readonly string[]> {
     const selected = new Set<number>();
-    for (const [fs, entries] of this.groupPaths(request.paths)) {
+    const groups = this.groupPaths(request.paths, (index) =>
+      selected.add(index),
+    );
+    for (const [fs, entries] of groups) {
       request.signal?.throwIfAborted();
       const paths = entries.map((entry) => entry.path);
       const candidates = await fs.searchCandidates?.({ ...request, paths });
