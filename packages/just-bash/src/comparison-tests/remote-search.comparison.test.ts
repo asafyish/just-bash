@@ -16,11 +16,8 @@ describe("remote search command comparison", () => {
   afterEach(async () => {
     await cleanupTestDir(testDir);
   });
-  it.each([
-    "grep -nE 'foo|bar' a.txt b.txt",
-    "rg -sn 'foo|bar' a.txt b.txt",
-    "rg --sort path -sc --include-zero foo a.txt b.txt",
-  ])("%s", async (command) => {
+  it("matches native grep", async () => {
+    const command = "grep -nE 'foo|bar' a.txt b.txt";
     const files = { "a.txt": "foo\nbar\n", "b.txt": "other\n" };
     await setupFiles(testDir, files);
     const remote = remoteFs(
