@@ -958,6 +958,12 @@ function matchesPreGlob(filename: string, preGlobs: string[]): boolean {
   return false;
 }
 
+interface FileData {
+  content: string;
+  isBinary: boolean;
+  lease?: ResourceLease;
+}
+
 /**
  * Read file content, handling preprocessing and gzip decompression if needed
  */
@@ -966,11 +972,7 @@ async function readFileContent(
   filePath: string,
   file: string,
   options: RgOptions,
-): Promise<{
-  content: string;
-  isBinary: boolean;
-  lease?: ResourceLease;
-} | null> {
+): Promise<FileData | null> {
   let lease: ResourceLease | undefined;
   try {
     // Check for preprocessing with --pre
@@ -1063,6 +1065,8 @@ async function readFileContent(
 
     // Regular file read
     const stat = await ctx.fs.stat(filePath);
+    // A filesystem read can transiently retain its byte buffer while creating
+    // the decoded string, so account for both representations prospectively.
     lease = ctx.executionScope?.reserveBytes(
       "rg file text",
       stat.size * 2,
@@ -1081,7 +1085,7 @@ function decodeFileContent(
   ctx: RuntimeCommandContext,
   rawContent: ByteString,
   size: number,
-) {
+): FileData {
   const contentBytes = latin1FromBytes(rawContent).length;
   if (contentBytes > size) {
     throw new ExecutionLimitError(
@@ -1095,7 +1099,10 @@ function decodeFileContent(
 }
 
 /** Bulk reads return the same per-file contents and leases as ordinary reads. */
-async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
+async function readFileBatch(
+  ctx: RuntimeCommandContext,
+  files: string[],
+): Promise<Array<FileData | null>> {
   const paths = files.map((file) => ctx.fs.resolvePath(ctx.cwd, file));
   const prepared = await Promise.allSettled(
     paths.map(async (path) => {
@@ -1124,8 +1131,7 @@ async function readFileBatch(ctx: RuntimeCommandContext, files: string[]) {
       readable.map((file) => paths[file.index]),
       ctx.signal,
     );
-    const contents: Array<Awaited<ReturnType<typeof readFileContent>>> =
-      files.map(() => null);
+    const contents: Array<FileData | null> = files.map(() => null);
     for (const [index, file] of readable.entries()) {
       try {
         const read = reads[index];
