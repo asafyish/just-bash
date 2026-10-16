@@ -534,12 +534,17 @@ export const sedCommand: RuntimeCommand = {
               : file + backupSuffix;
             const backupPath = ctx.fs.resolvePath(ctx.cwd, backup);
             if (backupPath !== filePath) {
-              await withDefenseContext("in-place backup", async () => {
-                const source = await ctx.fs.realpath(filePath);
-                if (backupPath === source) return;
-                await ctx.fs.rm(backupPath, { force: true });
-                await ctx.fs.cp(source, backupPath);
-              });
+              const source = await withDefenseContext("backup source", () =>
+                ctx.fs.realpath(filePath),
+              );
+              if (backupPath !== source) {
+                await withDefenseContext("remove previous backup", () =>
+                  ctx.fs.rm(backupPath, { force: true }),
+                );
+                await withDefenseContext("in-place backup", () =>
+                  ctx.fs.cp(source, backupPath),
+                );
+              }
             }
           }
           await withDefenseContext("in-place output write", () =>
