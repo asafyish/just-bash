@@ -40,6 +40,7 @@ export interface Change {
   oldCount: number;
   newStart: number;
   newCount: number;
+  ignored?: boolean;
 }
 
 /** Splits file content into lines, remembering a missing final newline. */
@@ -125,13 +126,11 @@ export function computeChanges(
       options.ignoreAllSpace || options.ignoreSpaceChange
         ? /^\s*$/.test(line)
         : line === "";
-    if (
-      !options.ignoreBlankLines ||
-      !oldFile.lines.slice(change.oldStart, oldIdx).every(isBlank) ||
-      !newFile.lines.slice(change.newStart, newIdx).every(isBlank)
-    ) {
-      changes.push(change);
-    }
+    change.ignored =
+      options.ignoreBlankLines &&
+      oldFile.lines.slice(change.oldStart, oldIdx).every(isBlank) &&
+      newFile.lines.slice(change.newStart, newIdx).every(isBlank);
+    changes.push(change);
   }
   return changes;
 }
@@ -187,6 +186,7 @@ export function formatNormal(
 ): string {
   const out: string[] = [];
   for (const change of changes) {
+    if (change.ignored) continue;
     const op = change.oldCount === 0 ? "a" : change.newCount === 0 ? "d" : "c";
     out.push(
       `${normalRange(change.oldStart, change.oldCount)}${op}${normalRange(
@@ -224,7 +224,7 @@ function groupIntoHunks(changes: Change[], context: number): Change[][] {
     current.push(change);
   }
   if (current.length > 0) hunks.push(current);
-  return hunks;
+  return hunks.filter((hunk) => hunk.some((change) => !change.ignored));
 }
 
 interface HunkBounds {

@@ -1,3 +1,4 @@
+import { applyPatch } from "diff";
 import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
@@ -33,6 +34,16 @@ describe("diff directory and comparison options", () => {
       stdout: "",
       stderr: "diff: /missing: No such file or directory\n",
       exitCode: 2,
+    });
+    expect(await bash.exec("diff /a/x.txt /a")).toMatchObject({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await bash.exec("diff /a/x.txt /b")).toMatchObject({
+      stdout: "1c1\n< 1\n---\n> 2\n",
+      stderr: "",
+      exitCode: 1,
     });
   });
 
@@ -90,6 +101,27 @@ describe("diff directory and comparison options", () => {
       stdout: "2c2,3\n< end\n---\n> \n> changed\n",
       stderr: "",
       exitCode: 1,
+    });
+  });
+
+  it("retains blank changes needed for an applicable unified hunk", async () => {
+    const before = "A\nX\n";
+    const after = "\nA\nY\n";
+    const bash = new Bash({ files: { "/a": before, "/b": after } });
+    const result = await bash.exec("diff -uB /a /b");
+    expect(result).toMatchObject({ stderr: "", exitCode: 1 });
+    expect(applyPatch(before, result.stdout)).toBe(after);
+  });
+
+  it("quotes directory entry names and stops recursive directory loops", async () => {
+    const bash = new Bash({
+      files: { "/a/x\ny": "x", "/b/same": "same", "/a/same": "same" },
+    });
+    await bash.exec("ln -s /a /a/loop; ln -s /b /b/loop");
+    expect(await bash.exec("diff -r /a /b")).toMatchObject({
+      stdout: 'Only in /a: "x\\ny"\n',
+      stderr: "diff: /a/loop: recursive directory loop\n",
+      exitCode: 2,
     });
   });
 });

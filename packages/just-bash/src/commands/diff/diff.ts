@@ -162,10 +162,13 @@ export const diffCommand: RuntimeCommand = {
       .filter(Boolean)
       .join(" ");
 
+    const activeLeft = new Set<string>();
+    const activeRight = new Set<string>();
     async function compare(
       f1: string,
       f2: string,
       depth: number,
+      directoryEntry = false,
     ): Promise<void> {
       budget.visit(depth);
       let path = f1;
@@ -181,47 +184,86 @@ export const diffCommand: RuntimeCommand = {
             : await ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, f2));
         if (s1?.isDirectory && s2?.isDirectory) {
           if (depth > 0 && !flags.recursive) {
-            stdout.append(`Common subdirectories: ${f1} and ${f2}\n`);
+            stdout.append(
+              `Common subdirectories: ${quoteFilename(f1)} and ${quoteFilename(f2)}\n`,
+            );
             return;
           }
-          path = f1;
-          const left = new Set(
-            await ctx.fs.readdir(ctx.fs.resolvePath(ctx.cwd, f1)),
+          const leftIdentity = await ctx.fs.realpath(
+            ctx.fs.resolvePath(ctx.cwd, f1),
           );
-          path = f2;
-          const right = new Set(
-            await ctx.fs.readdir(ctx.fs.resolvePath(ctx.cwd, f2)),
+          const rightIdentity = await ctx.fs.realpath(
+            ctx.fs.resolvePath(ctx.cwd, f2),
           );
-          budget.discover(left.size + right.size);
-          for (const name of [...new Set([...left, ...right])].sort()) {
-            if (!left.has(name) || !right.has(name)) {
-              stdout.append(`Only in ${left.has(name) ? f1 : f2}: ${name}\n`);
-              exitCode = Math.max(exitCode, 1);
-            } else {
-              await compare(
-                `${f1.replace(/\/$/, "")}/${name}`,
-                `${f2.replace(/\/$/, "")}/${name}`,
-                depth + 1,
-              );
+          if (activeLeft.has(leftIdentity) || activeRight.has(rightIdentity)) {
+            stderr.append(
+              `diff: ${quoteFilename(activeLeft.has(leftIdentity) ? f1 : f2)}: recursive directory loop\n`,
+            );
+            exitCode = 2;
+            return;
+          }
+          activeLeft.add(leftIdentity);
+          activeRight.add(rightIdentity);
+          try {
+            path = f1;
+            const left = new Set(
+              await ctx.fs.readdir(ctx.fs.resolvePath(ctx.cwd, f1)),
+            );
+            path = f2;
+            const right = new Set(
+              await ctx.fs.readdir(ctx.fs.resolvePath(ctx.cwd, f2)),
+            );
+            budget.discover(left.size + right.size);
+            for (const name of [...new Set([...left, ...right])].sort()) {
+              if (!left.has(name) || !right.has(name)) {
+                stdout.append(
+                  `Only in ${quoteFilename(left.has(name) ? f1 : f2)}: ${quoteFilename(name)}\n`,
+                );
+                exitCode = Math.max(exitCode, 1);
+              } else {
+                await compare(
+                  `${f1.replace(/\/$/, "")}/${name}`,
+                  `${f2.replace(/\/$/, "")}/${name}`,
+                  depth + 1,
+                  true,
+                );
+              }
             }
+          } finally {
+            activeLeft.delete(leftIdentity);
+            activeRight.delete(rightIdentity);
           }
           return;
         }
         if (s1?.isDirectory || s2?.isDirectory) {
+          if (depth === 0 && f1 !== "-" && f2 !== "-") {
+            await compare(
+              s1?.isDirectory
+                ? `${f1.replace(/\/$/, "")}/${f2.split("/").pop()}`
+                : f1,
+              s2?.isDirectory
+                ? `${f2.replace(/\/$/, "")}/${f1.split("/").pop()}`
+                : f2,
+              depth + 1,
+            );
+            return;
+          }
           stdout.append(
-            `File ${f1} is a ${s1?.isDirectory ? "directory" : "regular file"} while file ${f2} is a ${s2?.isDirectory ? "directory" : "regular file"}\n`,
+            `File ${quoteFilename(f1)} is a ${s1?.isDirectory ? "directory" : "regular file"} while file ${quoteFilename(f2)} is a ${s2?.isDirectory ? "directory" : "regular file"}\n`,
           );
           exitCode = Math.max(exitCode, 1);
           return;
         }
       } catch (error) {
         rethrowFatalExecutionError(error);
-        stderr.append(`diff: ${path}: No such file or directory\n`);
+        stderr.append(
+          `diff: ${quoteFilename(path)}: No such file or directory\n`,
+        );
         exitCode = 2;
         return;
       }
       const result = await compareFiles(f1, f2);
-      if (depth > 0 && result.exitCode === 1 && !brief) {
+      if (directoryEntry && result.exitCode === 1 && !brief) {
         stdout.append(
           `diff${headerOptions ? ` ${headerOptions}` : ""} ${quoteFilename(f1)} ${quoteFilename(f2)}\n`,
         );
@@ -244,7 +286,7 @@ export const diffCommand: RuntimeCommand = {
       } catch {
         return {
           stdout: "",
-          stderr: `diff: ${f1}: No such file or directory\n`,
+          stderr: `diff: ${quoteFilename(f1)}: No such file or directory\n`,
           exitCode: 2,
         };
       }
@@ -257,7 +299,7 @@ export const diffCommand: RuntimeCommand = {
       } catch {
         return {
           stdout: "",
-          stderr: `diff: ${f2}: No such file or directory\n`,
+          stderr: `diff: ${quoteFilename(f2)}: No such file or directory\n`,
           exitCode: 2,
         };
       }
@@ -267,7 +309,9 @@ export const diffCommand: RuntimeCommand = {
         : c1 === c2;
       if (same) {
         return {
-          stdout: reportSame ? `Files ${f1} and ${f2} are identical\n` : "",
+          stdout: reportSame
+            ? `Files ${quoteFilename(f1)} and ${quoteFilename(f2)} are identical\n`
+            : "",
           stderr: "",
           exitCode: 0,
         };
@@ -279,7 +323,7 @@ export const diffCommand: RuntimeCommand = {
         !flags.ignoreBlankLines
       ) {
         return {
-          stdout: `Files ${f1} and ${f2} differ\n`,
+          stdout: `Files ${quoteFilename(f1)} and ${quoteFilename(f2)} differ\n`,
           stderr: "",
           exitCode: 1,
         };
@@ -287,16 +331,18 @@ export const diffCommand: RuntimeCommand = {
       const oldFile = splitLines(c1);
       const newFile = splitLines(c2);
       const changes = computeChanges(oldFile, newFile, ignoreCase, flags);
-      if (changes.length === 0) {
+      if (changes.every((change) => change.ignored)) {
         return {
-          stdout: reportSame ? `Files ${f1} and ${f2} are identical\n` : "",
+          stdout: reportSame
+            ? `Files ${quoteFilename(f1)} and ${quoteFilename(f2)} are identical\n`
+            : "",
           stderr: "",
           exitCode: 0,
         };
       }
       if (brief) {
         return {
-          stdout: `Files ${f1} and ${f2} differ\n`,
+          stdout: `Files ${quoteFilename(f1)} and ${quoteFilename(f2)} differ\n`,
           stderr: "",
           exitCode: 1,
         };
