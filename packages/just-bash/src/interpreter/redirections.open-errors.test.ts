@@ -56,6 +56,7 @@ describe("redirection open errors", () => {
   it.each([
     ["EROFS", "Read-only file system"],
     ["EACCES", "Permission denied"],
+    ["EFBIG", "File too large"],
   ])("fails only the command for %s", async (code, reason) => {
     const bash = new Bash({ fs: new CodeOnlyErrorFs(code) });
     const result = await bash.exec(

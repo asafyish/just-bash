@@ -239,6 +239,7 @@ const PATH_ERROR_REASONS = new Map([
   ["ENAMETOOLONG", "File name too long"],
   ["EINVAL", "Invalid argument"],
   ["ENOSPC", "No space left on device"],
+  ["EFBIG", "File too large"],
 ]);
 
 async function openOutputEntry(
