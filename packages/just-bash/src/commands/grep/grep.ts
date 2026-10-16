@@ -297,8 +297,7 @@ export const grepCommand: RuntimeCommand = {
                   exitCode: 2,
                 };
               }
-              if (valueOption === "m")
-                maxCount = number === -1 ? 0 : number;
+              if (valueOption === "m") maxCount = number === -1 ? 0 : number;
               if (valueOption === "A" || valueOption === "C")
                 afterContext = number;
               if (valueOption === "B" || valueOption === "C")
