@@ -7,6 +7,7 @@ import type {
   RuntimeCommand,
   RuntimeCommandContext,
 } from "../../types.js";
+import { describeFsError } from "../../utils/fs-error.js";
 import { matchGlob } from "../../utils/glob.js";
 import { showHelp, unknownOption } from "../help.js";
 import {
@@ -335,7 +336,8 @@ export const grepCommand: RuntimeCommand = {
             flag === "--dereference-recursive"
           ) {
             recursive = true;
-            followSymlinks = flag === "R" || flag === "--dereference-recursive";
+            followSymlinks ||=
+              flag === "R" || flag === "--dereference-recursive";
           } else if (flag === "w" || flag === "--word-regexp") wholeWord = true;
           else if (flag === "x" || flag === "--line-regexp") lineRegexp = true;
           else if (flag === "E" || flag === "--extended-regexp")
@@ -783,7 +785,7 @@ export const grepCommand: RuntimeCommand = {
           anyMatch = true;
           if (quietMode) {
             // In quiet mode, exit immediately on first match
-            return { stdout: "", stderr: "", exitCode: 0 };
+            return { stdout: "", stderr, exitCode: 0 };
           }
           if (filesWithMatches) {
             stdout += `${file}\n`;
@@ -818,7 +820,7 @@ export const grepCommand: RuntimeCommand = {
     }
 
     if (quietMode) {
-      return { stdout: "", stderr: "", exitCode };
+      return { stdout: "", stderr, exitCode };
     }
 
     return {
@@ -1105,7 +1107,7 @@ async function expandRecursiveWithTypes(
   } catch (error) {
     rethrowFatalExecutionError(error);
     addTraversalResult(budget);
-    result.push({ path, error: `grep: ${path}: No such file or directory\n` });
+    result.push({ path, error: `grep: ${path}: ${describeFsError(error)}\n` });
   }
 
   return result;

@@ -26,18 +26,22 @@ describe("grep recursive operands", () => {
   });
 
   it("reports missing recursive operands even when another operand matches", async () => {
-    const result = await setup().exec("grep -r alpha /nonexist a.txt");
-    expect(result).toMatchObject({
-      stdout: "a.txt:alpha\n",
-      stderr: "grep: /nonexist: No such file or directory\n",
-      exitCode: 2,
-    });
+    for (const quiet of [false, true]) {
+      const result = await setup().exec(
+        `grep -r${quiet ? "q" : ""} alpha /nonexist a.txt`,
+      );
+      expect(result).toMatchObject({
+        stdout: quiet ? "" : "a.txt:alpha\n",
+        stderr: "grep: /nonexist: No such file or directory\n",
+        exitCode: quiet ? 0 : 2,
+      });
+    }
   });
 
   it("follows only operand symlinks with -r and all symlinks with -R", async () => {
     const bash = setup();
     const result = await bash.exec(
-      "ln -s /w/real /w/link; grep -rl alpha . | sort; grep -rl alpha link; grep -Rl alpha . | sort",
+      "ln -s /w/real /w/link; grep -rl alpha . | sort; grep -rl alpha link; grep -Rrl alpha . | sort",
     );
     expect(result).toMatchObject({
       stdout:
