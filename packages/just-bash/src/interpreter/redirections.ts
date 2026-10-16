@@ -240,6 +240,12 @@ const PATH_ERROR_REASONS = new Map([
   ["EINVAL", "Invalid argument"],
   ["ENOSPC", "No space left on device"],
   ["EFBIG", "File too large"],
+  ["EDQUOT", "Disk quota exceeded"],
+  ["EMFILE", "Too many open files"],
+  ["ENFILE", "Too many open files in system"],
+  ["EIO", "Input/output error"],
+  ["ELOOP", "Too many levels of symbolic links"],
+  ["ETXTBSY", "Text file busy"],
 ]);
 
 async function openOutputEntry(
@@ -1291,10 +1297,18 @@ export async function applyRedirections(
       content: string,
       encoding: "binary" | "utf8",
     ) => {
-      if (sink.append) {
-        await ctx.fs.appendFile(sink.path, content, encoding);
-      } else {
-        await ctx.fs.writeFile(sink.path, content, encoding);
+      try {
+        if (sink.append) {
+          await ctx.fs.appendFile(sink.path, content, encoding);
+        } else {
+          await ctx.fs.writeFile(sink.path, content, encoding);
+        }
+      } catch (error) {
+        const code = getErrorCode(error);
+        const reason = code && PATH_ERROR_REASONS.get(code);
+        if (!reason) throw error;
+        stderr += `bash: ${sink.path}: ${reason}\n`;
+        exitCode = 1;
       }
     };
     if (

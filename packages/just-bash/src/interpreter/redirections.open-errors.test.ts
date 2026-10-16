@@ -53,6 +53,21 @@ const bashWithoutParentCreation = () =>
   new Bash({ fs: new NoParentCreationFs({ "/file": "" }) });
 
 describe("redirection open errors", () => {
+  it("keeps running when the content write exceeds filesystem capacity", async () => {
+    const fs = new InMemoryFs(undefined, { maxTotalBytes: 1_024 });
+    const bash = new Bash({ fs });
+    for (const redirect of [">", ">>"]) {
+      expect(
+        await bash.exec(`printf '%2000s' x ${redirect} /out || echo handled`),
+      ).toMatchObject({
+        stdout: "handled\n",
+        stderr: "bash: /out: No space left on device\n",
+        exitCode: 0,
+      });
+      expect(await fs.readFile("/out")).toBe("");
+    }
+  });
+
   it.each([
     ["EROFS", "Read-only file system"],
     ["EACCES", "Permission denied"],
