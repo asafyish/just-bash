@@ -259,6 +259,7 @@ function withVar(
     env: ctx.env,
     namedArgs: ctx.namedArgs,
     positionalArgs: ctx.positionalArgs,
+    inputValues: ctx.inputValues,
     requireDefenseContext: ctx.requireDefenseContext,
     defenseContextChecked: ctx.defenseContextChecked,
     root: ctx.root,
@@ -1166,6 +1167,9 @@ function applyUpdate(
         return val;
       }
 
+      case "Paren":
+        return updateRecursive(val, path.expr, transform);
+
       case "Identity":
         return transform(val);
 
@@ -1333,8 +1337,9 @@ function applyUpdate(
       }
 
       case "Pipe": {
-        const leftResult = updateRecursive(val, path.left, (x) => x);
-        return updateRecursive(leftResult, path.right, transform);
+        return updateRecursive(val, path.left, (nested) =>
+          updateRecursive(nested, path.right, transform),
+        );
       }
 
       default:
@@ -1600,6 +1605,9 @@ function applyDel(
         return setAt(val, leftPath, modified);
       }
 
+      case "Call":
+        if (path.name === "empty" && path.args.length === 0) return val;
+        throw new JqError("Unsupported path expression in del");
       default:
         throw new JqError("Unsupported path expression in del");
     }

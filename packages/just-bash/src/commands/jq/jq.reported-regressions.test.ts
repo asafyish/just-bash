@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("jq reported regressions", () => {
@@ -9,8 +9,15 @@ describe("jq reported regressions", () => {
       await bash.exec(`echo '{"a":1}' | jq -c 'getpath(["a"]) |= 3'`),
     ).toMatchObject({ stdout: '{"a":3}\n', stderr: "", exitCode: 0 });
     expect(
-      await bash.exec(`echo '{"a":[1,2]}' | jq -c 'getpath(["a",1]) += 3'`),
+      await bash.exec(
+        `echo '{"a":[1,2]}' | jq -c '(getpath(["a"]) | getpath([-1])) += 3'`,
+      ),
     ).toMatchObject({ stdout: '{"a":[1,5]}\n', stderr: "", exitCode: 0 });
+    expect(await bash.exec("echo '[1,2]' | jq -c 'del(empty)'")).toMatchObject({
+      stdout: "[1,2]\n",
+      stderr: "",
+      exitCode: 0,
+    });
     expect(
       await bash.exec(`echo '[1,2,3]' | jq -c 'del(.[] | select(. == 2))'`),
     ).toMatchObject({
@@ -35,9 +42,18 @@ describe("jq reported regressions", () => {
 
   it("shares the remaining input stream with inputs, including under -n", async () => {
     const bash = new Bash({ files: { "/values": "1\n2\n", "/raw": "a\nb\n" } });
+    const read = vi.spyOn(bash.fs, "readFileBytes");
+    expect(await bash.exec("jq -n '.' /values")).toMatchObject({
+      stdout: "null\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(read).not.toHaveBeenCalled();
+    read.mockRestore();
     for (const command of [
       "cat /values | jq -nc '[inputs]'",
       "jq -nc '[inputs]' /values",
+      "jq -nc 'null as $x | [inputs]' /values",
       "cat /values | jq -c '[., inputs]'",
     ]) {
       expect(await bash.exec(command)).toMatchObject({
@@ -61,7 +77,7 @@ describe("jq reported regressions", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(await bash.exec("jq -nc '[inputs]' /missing")).toMatchObject({
+    expect(await bash.exec("jq -nc '[inputs?]' /missing")).toMatchObject({
       stdout: "",
       stderr: "jq: /missing: No such file or directory\n",
       exitCode: 2,
