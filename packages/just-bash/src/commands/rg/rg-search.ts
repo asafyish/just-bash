@@ -42,14 +42,24 @@ function isGzip(data: Uint8Array): boolean {
 function validateGlob(glob: string): string | null {
   // Check for unclosed character class
   let inClass = false;
+  let braces = 0;
   for (let i = 0; i < glob.length; i++) {
     const char = glob[i];
+    if (char === "\\") {
+      i++;
+      continue;
+    }
+    if (!inClass && char === "{") braces++;
+    if (!inClass && char === "}" && --braces < 0) {
+      return `rg: glob '${glob}' has an unmatched closing brace`;
+    }
     if (char === "[" && !inClass) {
       inClass = true;
     } else if (char === "]" && inClass) {
       inClass = false;
     }
   }
+  if (braces > 0) return `rg: glob '${glob}' has an unclosed brace`;
   if (inClass) {
     return `rg: glob '${glob}' has an unclosed character class`;
   }
@@ -832,9 +842,20 @@ function matchGlobOverride(
  */
 function matchGlob(str: string, pattern: string, ignoreCase = false): boolean {
   let regexStr = "^";
+  let braces = 0;
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i];
-    if (char === "*") {
+    if (char === "\\" && i + 1 < pattern.length) {
+      regexStr += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    } else if (char === "{") {
+      braces++;
+      regexStr += "(?:";
+    } else if (char === "}") {
+      braces--;
+      regexStr += ")";
+    } else if (char === "," && braces > 0) {
+      regexStr += "|";
+    } else if (char === "*") {
       if (pattern[i + 1] === "*") {
         regexStr += ".*";
         i++;
