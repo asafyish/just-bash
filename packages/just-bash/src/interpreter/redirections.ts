@@ -232,6 +232,13 @@ const getDupSource = (
 const PATH_ERROR_REASONS = new Map([
   ["ENOENT", "No such file or directory"],
   ["ENOTDIR", "Not a directory"],
+  ["EROFS", "Read-only file system"],
+  ["EACCES", "Permission denied"],
+  ["EPERM", "Operation not permitted"],
+  ["EISDIR", "Is a directory"],
+  ["ENAMETOOLONG", "File name too long"],
+  ["EINVAL", "Invalid argument"],
+  ["ENOSPC", "No space left on device"],
 ]);
 
 async function openOutputEntry(

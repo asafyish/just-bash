@@ -38,9 +38,13 @@ class NoParentCreationFs extends InMemoryFs {
 }
 
 class CodeOnlyErrorFs extends InMemoryFs {
+  constructor(private readonly code = "ENOENT") {
+    super();
+  }
+
   override async writeFile(): Promise<void> {
     throw Object.assign(new Error("no such file or directory"), {
-      code: "ENOENT",
+      code: this.code,
     });
   }
 }
@@ -49,6 +53,23 @@ const bashWithoutParentCreation = () =>
   new Bash({ fs: new NoParentCreationFs({ "/file": "" }) });
 
 describe("redirection open errors", () => {
+  it.each([
+    ["EROFS", "Read-only file system"],
+    ["EACCES", "Permission denied"],
+  ])("fails only the command for %s", async (code, reason) => {
+    const bash = new Bash({ fs: new CodeOnlyErrorFs(code) });
+    const result = await bash.exec(
+      'echo before; echo x > /ro/f; echo "after rc=$?"; ' +
+        "echo x > /ro/f || echo handled; " +
+        'for i in 1 2; do echo $i > /ro/f; echo "loop $i"; done; echo end',
+    );
+    expect(result.stdout).toBe(
+      "before\nafter rc=1\nhandled\nloop 1\nloop 2\nend\n",
+    );
+    expect(result.stderr).toBe(`bash: /ro/f: ${reason}\n`.repeat(4));
+    expect(result.exitCode).toBe(0);
+  });
+
   it.each([
     "echo x > /missing/f",
     "echo x >| /missing/f",
