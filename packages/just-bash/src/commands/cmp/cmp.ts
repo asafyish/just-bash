@@ -116,8 +116,10 @@ export const cmpCommand: RuntimeCommand = {
               stderr: "",
               exitCode: 1,
             };
+          const offset = String(i + 1);
+          output.repeat(" ", String(length).length - offset.length);
           output.append(
-            `${String(i + 1).padStart(String(length).length)} ${left.toString(8).padStart(3)} ${right.toString(8).padStart(3)}\n`,
+            `${offset} ${left.toString(8).padStart(3)} ${right.toString(8).padStart(3)}\n`,
           );
           different = true;
         }
