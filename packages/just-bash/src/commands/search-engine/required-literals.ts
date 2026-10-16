@@ -14,6 +14,12 @@ export interface PreFilter {
    * the pattern's alternatives, each with the literals it requires.
    */
   groups: string[][];
+  /**
+   * Top-level alternatives that match exactly one literal: text containing one
+   * matches the pattern, so RE2 is needed only for the match's position. Under
+   * ignoreCase they are lowercase ASCII.
+   */
+  exact: string[];
   /** Needles are lowercase ASCII, and text is case-folded before the check. */
   ignoreCase: boolean;
 }
@@ -106,11 +112,22 @@ class RequirementParser {
 
   constructor(private readonly pattern: string) {}
 
-  parse(): Requirement {
-    const { requirement } = this.alternation(0);
+  parse(): { exact: string[]; requirement: Requirement } {
+    const exact: string[] = [];
+    let requirement: Requirement | null = null;
+    for (;;) {
+      const alternative = this.concatenation(0);
+      if (alternative.exact) exact.push(alternative.exact);
+      requirement =
+        requirement === null
+          ? alternative.requirement
+          : either(requirement, alternative.requirement);
+      if (this.pattern[this.position] !== "|") break;
+      this.position++;
+    }
     // A stray ")" is a syntax error the engine reports; nothing to filter.
     if (this.position < this.pattern.length) throw new UnsupportedPattern();
-    return requirement;
+    return { exact, requirement };
   }
 
   private alternation(depth: number): Parsed {
@@ -355,20 +372,32 @@ export function requiredLiterals(
   pattern: string,
   ignoreCase: boolean,
 ): PreFilter | null {
-  let requirement: Requirement;
+  let parsed: { exact: string[]; requirement: Requirement };
   try {
-    requirement = new RequirementParser(pattern).parse();
+    parsed = new RequirementParser(pattern).parse();
   } catch (error) {
     if (error instanceof UnsupportedPattern) return null;
     throw error;
   }
   const groups: string[][] = [];
-  for (const group of requirement) {
+  for (const group of parsed.requirement) {
     const needles = ignoreCase ? group.flatMap(foldedAsciiRuns) : group;
     if (needles.length === 0) return null;
     groups.push(capped(needles));
   }
-  return groups.length === 0 ? null : { groups: distinct(groups), ignoreCase };
+  const exact = ignoreCase
+    ? parsed.exact.filter(isAscii).map((literal) => literal.toLowerCase())
+    : parsed.exact;
+  return groups.length === 0
+    ? null
+    : { groups: distinct(groups), exact: [...new Set(exact)], ignoreCase };
+}
+
+function isAscii(text: string): boolean {
+  for (let index = 0; index < text.length; index++) {
+    if (text.charCodeAt(index) > 0x7f) return false;
+  }
+  return true;
 }
 
 /**
@@ -383,8 +412,36 @@ function foldCase(text: string): string {
 
 /** Whether text may match: it contains every needle of at least one group. */
 export function preFilterMatches(preFilter: PreFilter, text: string): boolean {
+  return containsGroup(
+    preFilter.groups,
+    preFilter.ignoreCase ? foldCase(text) : text,
+  );
+}
+
+/**
+ * What text's literals settle: "match" when it contains an exact alternative,
+ * "no-match" when it lacks every group, else "unknown" and RE2 decides.
+ */
+export function preFilterVerdict(
+  preFilter: PreFilter,
+  text: string,
+): "match" | "no-match" | "unknown" {
   const haystack = preFilter.ignoreCase ? foldCase(text) : text;
-  const groups = preFilter.groups;
+  // Of all non-ASCII characters, only K (U+212A) and İ (U+0130) lowercase to
+  // something with ASCII in it. RE2 folds K to k, but not İ to the i of its
+  // "i̇", so under ignoreCase an exact literal decides only text without İ.
+  if (
+    preFilter.exact.length > 0 &&
+    (!preFilter.ignoreCase || !text.includes("İ"))
+  ) {
+    for (const literal of preFilter.exact) {
+      if (haystack.includes(literal)) return "match";
+    }
+  }
+  return containsGroup(preFilter.groups, haystack) ? "unknown" : "no-match";
+}
+
+function containsGroup(groups: string[][], haystack: string): boolean {
   for (let g = 0; g < groups.length; g++) {
     const needles = groups[g];
     let found = true;
