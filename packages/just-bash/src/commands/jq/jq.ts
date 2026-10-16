@@ -23,12 +23,15 @@ import { utf8ByteLength } from "../printf/escapes.js";
 import {
   type EvaluateOptions,
   evaluate,
+  JqError,
   parse,
   type QueryValue,
 } from "../query-engine/index.js";
 import { formatJsonValue } from "../query-engine/json-output.js";
 import { sanitizeParsedData } from "../query-engine/safe-object.js";
 import { getValueDepth } from "../query-engine/value-operations.js";
+
+class JqInputError extends Error {}
 
 function escapeControlChar(char: string): string {
   switch (char) {
@@ -231,7 +234,7 @@ const jqHelp = {
     "-e, --exit-status set exit status based on output",
     "-s, --slurp       read entire input into array",
     "-n, --null-input  don't read any input",
-    "-j, --join-output don't print newlines after each output",
+    "-j, --join-output raw output without newlines between values",
     "-a, --ascii       force ASCII output",
     "-S, --sort-keys   sort object keys",
     "-C, --color       colorize output (ignored)",
@@ -441,9 +444,8 @@ export const jqCommand: RuntimeCommand = {
     // bytes are decoded to UTF-8 before parsing — without this, multi-byte
     // sequences inside string values get re-encoded twice and emit mojibake.
     let inputs: { source: string; content: string }[] = [];
-    if (nullInput) {
-      // No input
-    } else if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
+    let inputError: string | undefined;
+    if (files.length === 0 || (files.length === 1 && files[0] === "-")) {
       inputs.push({ source: "stdin", content: decodeBytesToUtf8(ctx.stdin) });
     } else {
       // Read all files in parallel using shared utility
@@ -453,13 +455,7 @@ export const jqCommand: RuntimeCommand = {
           stopOnError: true,
         }),
       );
-      if (result.exitCode !== 0) {
-        return {
-          stdout: "",
-          stderr: result.stderr,
-          exitCode: 2, // jq uses exit code 2 for file errors
-        };
-      }
+      if (result.exitCode !== 0) inputError = result.stderr;
       inputs = result.files.map((f) => ({
         source: f.filename || "stdin",
         content: decodeBytesToUtf8(f.content),
@@ -501,60 +497,46 @@ export const jqCommand: RuntimeCommand = {
         for (const value of next) target.push(value);
       };
 
+      // The main filter and inputs consume the same stream. With -n, parsing
+      // starts only if the filter requests input.
+      function* readInputValues(): Generator<QueryValue> {
+        if (inputError) throw new JqInputError(inputError);
+        if (rawInput && slurp) {
+          yield inputs.map(({ content }) => content).join("");
+        } else if (rawInput) {
+          // Preserve raw lines that span file boundaries.
+          let remainder = "";
+          for (const { content } of inputs) {
+            const text = remainder + content;
+            let start = 0;
+            let nl = text.indexOf("\n", start);
+            while (nl !== -1) {
+              yield text.slice(start, nl);
+              start = nl + 1;
+              nl = text.indexOf("\n", start);
+            }
+            remainder = text.slice(start);
+          }
+          if (remainder !== "") yield remainder;
+        } else {
+          const items: QueryValue[] = [];
+          for (const { content } of inputs) {
+            const trimmed = content.trim();
+            if (!trimmed) continue;
+            const parsed = parseJsonStream(trimmed, jsonLimits);
+            if (slurp) appendValues(items, parsed);
+            else yield* parsed;
+          }
+          if (slurp) yield items;
+        }
+      }
+      const inputValues = readInputValues();
+      evalOptions.inputValues = inputValues;
       if (nullInput) {
         values = evaluate(null, ast, evalOptions);
-      } else if (rawInput && slurp) {
-        // Raw slurp: the entire concatenated input becomes one JSON string.
-        const rawText = inputs.map(({ content }) => content).join("");
-        values = evaluate(rawText, ast, evalOptions);
-      } else if (rawInput) {
-        // Raw input: real jq concatenates all inputs into a single stream and
-        // splits on newlines, so a line can span a file boundary when a file
-        // lacks a trailing newline. Scan incrementally, carrying only the
-        // unterminated trailing fragment across inputs, instead of building the
-        // full concatenated string and a complete array of lines. A trailing
-        // newline does not yield a final empty string, but interior blank
-        // lines are preserved.
-        let remainder = "";
-        for (const { content } of inputs) {
-          const text = remainder + content;
-          let start = 0;
-          let nl = text.indexOf("\n", start);
-          while (nl !== -1) {
-            appendValues(
-              values,
-              evaluate(text.slice(start, nl), ast, evalOptions),
-            );
-            start = nl + 1;
-            nl = text.indexOf("\n", start);
-          }
-          remainder = text.slice(start);
-        }
-        if (remainder !== "") {
-          appendValues(values, evaluate(remainder, ast, evalOptions));
-        }
-      } else if (slurp) {
-        // Slurp mode: combine all inputs into single array
-        // Use JSON stream parser to handle concatenated JSON (not just NDJSON)
-        const items: QueryValue[] = [];
-        for (const { content } of inputs) {
-          const trimmed = content.trim();
-          if (trimmed) {
-            appendValues(items, parseJsonStream(trimmed, jsonLimits));
-          }
-        }
-        values = evaluate(items, ast, evalOptions);
       } else {
-        // Process each input file separately
-        // Use JSON stream parser to handle concatenated JSON (e.g., cat file1.json file2.json | jq .)
-        for (const { content } of inputs) {
-          const trimmed = content.trim();
-          if (!trimmed) continue;
-
-          const jsonValues = parseJsonStream(trimmed, jsonLimits);
-          for (const jsonValue of jsonValues) {
-            appendValues(values, evaluate(jsonValue, ast, evalOptions));
-          }
+        for (const value of inputValues) {
+          appendValues(values, evaluate(value, ast, evalOptions));
         }
       }
 
@@ -587,7 +569,7 @@ export const jqCommand: RuntimeCommand = {
         }
         const text = formatJsonValue(value, remainingBytes, {
           compact,
-          raw,
+          raw: raw || joinOutput,
           sortKeys,
           useTab,
           limitKind: "string_length",
@@ -622,6 +604,9 @@ export const jqCommand: RuntimeCommand = {
         exitCode,
       };
     } catch (e) {
+      if (e instanceof JqInputError) {
+        return { stdout: "", stderr: e.message, exitCode: 2 };
+      }
       if (e instanceof SecurityViolationError) {
         throw e;
       }
@@ -634,7 +619,7 @@ export const jqCommand: RuntimeCommand = {
         };
       }
       const msg = sanitizeErrorMessage((e as Error).message);
-      if (msg.includes("Unknown function")) {
+      if (!(e instanceof JqError) && msg.includes("Unknown function")) {
         return {
           stdout: "",
           stderr: `jq: error: ${msg}\n`,
@@ -643,7 +628,7 @@ export const jqCommand: RuntimeCommand = {
       }
       return {
         stdout: "",
-        stderr: `jq: parse error: ${msg}\n`,
+        stderr: `jq: ${e instanceof JqError ? "error" : "parse error"}: ${msg}\n`,
         exitCode: 5,
       };
     }

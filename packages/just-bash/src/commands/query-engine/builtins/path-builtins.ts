@@ -40,7 +40,7 @@ type CollectPathsFn = (
   paths: (string | number)[][],
 ) => void;
 
-function validateBoundedPath(
+export function validateBoundedPath(
   path: unknown,
   ctx: EvalContext,
 ): (string | number)[] {
