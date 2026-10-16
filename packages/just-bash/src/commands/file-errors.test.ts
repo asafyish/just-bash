@@ -3,11 +3,14 @@ import { Bash } from "../Bash.js";
 import { InMemoryFs } from "../fs/in-memory-fs/index.js";
 
 class FailingWritesFs extends InMemoryFs {
-  errorCode = "EROFS";
-  override async writeFile(): Promise<void> {
-    throw Object.assign(new Error("host path must not be printed"), {
-      code: this.errorCode,
-    });
+  errorCode: string | undefined = "EROFS";
+  override async writeFile(
+    ...args: Parameters<InMemoryFs["writeFile"]>
+  ): Promise<void> {
+    if (args[0] === "/ok") return super.writeFile(...args);
+    const error = new Error("host path must not be printed");
+    if (this.errorCode) Object.assign(error, { code: this.errorCode });
+    throw error;
   }
 }
 
@@ -22,12 +25,14 @@ describe("file error messages", () => {
   });
 
   it.each([
-    ["tee /ro/f.txt <<< hi", "tee", "hi\n"],
+    ["tee /ro/f.txt /ok <<< hi", "tee", "hi\n"],
     ["sed -i 's/x/y/' /ro/f.txt", "sed", ""],
   ])("reports write refusal for %s", async (script, command, stdout) => {
     for (const [code, reason] of [
       ["EROFS", "Read-only file system"],
       ["EFBIG", "File too large"],
+      ["EDQUOT", "Disk quota exceeded"],
+      [undefined, "Input/output error"],
     ]) {
       const fs = new FailingWritesFs({ "/ro/f.txt": "x\n" });
       fs.errorCode = code;
@@ -38,6 +43,7 @@ describe("file error messages", () => {
         exitCode: 1,
       });
       expect(await fs.readFile("/ro/f.txt")).toBe("x\n");
+      if (command === "tee") expect(await fs.readFile("/ok")).toBe("hi\n");
     }
   });
 });
