@@ -58,6 +58,9 @@ function safeExpandNumericRange(
   endStr?: string,
   limits: BraceRangeLimits = DEFAULT_RANGE_LIMITS,
 ): string[] | null {
+  // Integers outside the supported range can stop advancing when incremented.
+  if (![start, end, rawStep ?? 1].every(Number.isSafeInteger)) return null;
+
   // Step of 0 is treated as 1 in bash
   let step = rawStep ?? 1;
   if (step === 0) step = 1;

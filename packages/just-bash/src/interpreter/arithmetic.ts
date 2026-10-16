@@ -29,22 +29,32 @@ import { Parser } from "../parser/parser.js";
 import { ArithmeticError, NounsetError } from "./errors.js";
 import { expandWord, getArrayElements, getVariable } from "./expansion.js";
 import { getArrayElement, hasArray, setArrayElement } from "./helpers/array.js";
+import { recordSubstitutionExit } from "./helpers/substitution-status.js";
+import { beginIsolatedShellState } from "./state-transaction.js";
 import type { InterpreterContext } from "./types.js";
 
 async function expandArithmeticCommand(
   ctx: InterpreterContext,
   command: string,
 ): Promise<string> {
-  return expandWord(ctx, {
-    type: "Word",
-    parts: [
-      {
-        type: "CommandSubstitution",
-        body: new Parser().parse(command),
-        legacy: false,
-      },
-    ],
-  });
+  const restore = beginIsolatedShellState(ctx.state);
+  try {
+    return await expandWord(ctx, {
+      type: "Word",
+      parts: [
+        {
+          type: "CommandSubstitution",
+          body: new Parser().parse(command),
+          legacy: false,
+        },
+      ],
+    });
+  } finally {
+    const { expansionStderr, lastExitCode } = ctx.state;
+    restore();
+    ctx.state.expansionStderr = expansionStderr;
+    recordSubstitutionExit(ctx.state, lastExitCode);
+  }
 }
 
 interface ArithmeticResolutionContext {
