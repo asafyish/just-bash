@@ -146,7 +146,11 @@ export async function executeSearch(
   const { ctx, options, paths: inputPaths, explicitLineNumbers } = searchCtx;
 
   // Validate glob patterns for errors
-  for (const glob of [...options.globs, ...options.iglobs]) {
+  for (const glob of [
+    ...options.globs,
+    ...options.iglobs,
+    ...options.preprocessorGlobs,
+  ]) {
     const globToValidate = glob.startsWith("!") ? glob.slice(1) : glob;
     const error = validateGlob(globToValidate);
     if (error) {

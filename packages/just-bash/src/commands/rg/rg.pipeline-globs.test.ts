@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("rg pipeline output and brace globs", () => {
+  it("reports malformed preprocessor globs before searching", async () => {
+    const result = await new Bash().exec("rg --pre cat --pre-glob '{a' foo");
+    expect(result).toMatchObject({
+      stdout: "",
+      stderr: "rg: glob '{a' has an unclosed brace\n",
+      exitCode: 2,
+    });
+  });
+
   it("omits line numbers in pipelines unless -n is requested", async () => {
     const result = await new Bash().exec(
       "printf 'a\\nb\\n' | rg b; printf 'a\\nb\\n' | rg -n b",
