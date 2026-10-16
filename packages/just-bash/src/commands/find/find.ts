@@ -350,7 +350,7 @@ export const findCommand: RuntimeCommand = {
 
       // Check if path exists
       try {
-        await ctx.fs.stat(basePath);
+        await ctx.fs.lstat(basePath);
       } catch {
         appendStderr(`find: ${searchPath}: No such file or directory\n`);
         exitCode = 1;
@@ -364,6 +364,7 @@ export const findCommand: RuntimeCommand = {
         typeInfo?: { isFile: boolean; isDirectory: boolean };
         // For ordered results: index where this item's results go
         resultIndex: number;
+        ancestors?: readonly string[];
       }
 
       // Processed node info
@@ -446,6 +447,17 @@ export const findCommand: RuntimeCommand = {
             ? searchPath
             : `${searchPath}${searchPath.endsWith("/") ? "" : "/"}${currentPath.slice(basePath === "/" ? 1 : basePath.length + 1)}`;
 
+        let ancestors = item.ancestors;
+        if (isDirectory && followMode === "-L") {
+          const identity = await ctx.fs.realpath(currentPath);
+          if (ancestors?.includes(identity)) {
+            appendStderr(`find: ${relativePath}: File system loop detected\n`);
+            exitCode = 1;
+            return null;
+          }
+          ancestors = [...(ancestors ?? []), identity];
+        }
+
         // Get children for directories
         const children: WorkItem[] = [];
         let entriesWithTypes: DirentEntry[] | null = null;
@@ -522,6 +534,7 @@ export const findCommand: RuntimeCommand = {
                           isDirectory: entry.isDirectory,
                         },
                   resultIndex: idx,
+                  ancestors,
                 });
               }
             }
@@ -541,6 +554,7 @@ export const findCommand: RuntimeCommand = {
                       : `${currentPath}/${entry}`,
                   depth: depth + 1,
                   resultIndex: idx,
+                  ancestors,
                 });
               }
             }
@@ -1093,8 +1107,8 @@ function formatFindPrintf(
           break;
         case "P": {
           // Path without starting point
-          const sp = result.startingPoint;
-          if (result.path === sp) {
+          const sp = result.startingPoint.replace(/\/+$/, "");
+          if (result.path.replace(/\/+$/, "") === sp) {
             value = "";
           } else if (result.path.startsWith(`${sp}/`)) {
             value = result.path.slice(sp.length + 1);

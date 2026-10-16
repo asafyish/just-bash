@@ -24,13 +24,26 @@ describe("symlink traversal and find regex", () => {
 
   it("honors trailing slashes and -H/-L without changing the default", async () => {
     const result = await (await setup()).exec(
-      "find /w/link/ -maxdepth 1; find -H /w/link -name s.txt; find -L /w -name s.txt | sort; find /w/link -name s.txt",
+      "find /w/link/ -maxdepth 1; find -H /w/link -name s.txt; find -L /w -name s.txt | sort; find /w/link -name s.txt; find -P /w/broken; find -H /w/broken; find -L /w/broken; find /w/link/ -printf '%P\\n'",
     );
     expect(result).toMatchObject({
       stdout:
-        "/w/link/\n/w/link/s.txt\n/w/link/s.txt\n/w/link/s.txt\n/w/real/s.txt\n",
+        "/w/link/\n/w/link/s.txt\n/w/link/s.txt\n/w/link/s.txt\n/w/real/s.txt\n/w/broken\n/w/broken\n/w/broken\n\ns.txt\n",
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  it("reports directory loops while still visiting separate aliases", async () => {
+    const bash = await setup();
+    await bash.exec("ln -s /w/real /w/real/loop");
+    expect(
+      await bash.exec("find -L /w/link /w/real -name s.txt"),
+    ).toMatchObject({
+      stdout: "/w/link/s.txt\n/w/real/s.txt\n",
+      stderr:
+        "find: /w/link/loop: File system loop detected\nfind: /w/real/loop: File system loop detected\n",
+      exitCode: 1,
     });
   });
 
