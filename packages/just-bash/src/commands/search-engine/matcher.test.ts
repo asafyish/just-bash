@@ -26,7 +26,11 @@ describe("preFilterMatches — substring fast-path", () => {
   it("skips lines where no needle is present (case-sensitive)", () => {
     const content = "hello world\nfoo bar\nhello foo\n";
     const { regex } = buildRegex("foo", { mode: "basic" });
-    const preFilter: PreFilter = { groups: [["foo"]], ignoreCase: false };
+    const preFilter: PreFilter = {
+      groups: [["foo"]],
+      exact: ["foo"],
+      ignoreCase: false,
+    };
     const result = searchContent(content, regex, { preFilter });
     expect(result.output).toBe("foo bar\nhello foo\n");
     expect(result.matchCount).toBe(2);
@@ -35,7 +39,11 @@ describe("preFilterMatches — substring fast-path", () => {
   it("lowercases both needle and line when ignoreCase=true", () => {
     const content = "FOO\nfoo\nbar\n";
     const { regex } = buildRegex("foo", { mode: "basic", ignoreCase: true });
-    const preFilter: PreFilter = { groups: [["foo"]], ignoreCase: true };
+    const preFilter: PreFilter = {
+      groups: [["foo"]],
+      exact: ["foo"],
+      ignoreCase: true,
+    };
     const result = searchContent(content, regex, { preFilter });
     expect(result.output).toBe("FOO\nfoo\n");
     expect(result.matchCount).toBe(2);
@@ -46,6 +54,7 @@ describe("preFilterMatches — substring fast-path", () => {
     const { regex } = buildRegex("alpha\\|delta", { mode: "basic" });
     const preFilter: PreFilter = {
       groups: [["alpha"], ["delta"]],
+      exact: ["alpha", "delta"],
       ignoreCase: false,
     };
     const result = searchContent(content, regex, { preFilter });
@@ -59,7 +68,11 @@ describe("preFilterMatches — substring fast-path", () => {
     // is still correct because a line without the needle provably can't match.
     const content = "foo\nbar\nbaz\n";
     const { regex } = buildRegex("foo", { mode: "basic" });
-    const preFilter: PreFilter = { groups: [["foo"]], ignoreCase: false };
+    const preFilter: PreFilter = {
+      groups: [["foo"]],
+      exact: ["foo"],
+      ignoreCase: false,
+    };
     const result = searchContent(content, regex, {
       preFilter,
       invertMatch: true,
@@ -75,6 +88,7 @@ describe("preFilterMatches — substring fast-path", () => {
     });
     expect(preFilter).toEqual({
       groups: [["product", "update"]],
+      exact: [],
       ignoreCase: false,
     });
     expect(searchContent(content, regex, { preFilter }).output).toBe(

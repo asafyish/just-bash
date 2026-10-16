@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { preFilterMatches, requiredLiterals } from "./required-literals.js";
+import {
+  preFilterMatches,
+  preFilterVerdict,
+  requiredLiterals,
+} from "./required-literals.js";
 
 const groups = (pattern: string, ignoreCase = false) =>
   requiredLiterals(pattern, ignoreCase)?.groups ?? null;
@@ -75,9 +79,19 @@ describe("requiredLiterals", () => {
   it("keeps the ASCII runs of needles under ignoreCase", () => {
     expect(requiredLiterals("Über|FOO", true)).toEqual({
       groups: [["ber"], ["foo"]],
+      exact: ["foo"],
       ignoreCase: true,
     });
     expect(requiredLiterals("σίγμα", true)).toBeNull();
+  });
+
+  it("lists the top-level alternatives that match one literal", () => {
+    expect(requiredLiterals("foo|bar.*baz|(?:qux)", false)).toEqual({
+      groups: [["foo"], ["bar", "baz"], ["qux"]],
+      exact: ["foo", "qux"],
+      ignoreCase: false,
+    });
+    expect(requiredLiterals("\\b(?:foo|bar)\\b", false)?.exact).toEqual([]);
   });
 
   it("keeps non-ASCII needles when case matters", () => {
@@ -85,9 +99,33 @@ describe("requiredLiterals", () => {
   });
 });
 
+describe("preFilterVerdict", () => {
+  const preFilter = requiredLiterals("inactive|product.*update", true);
+
+  it("settles a line by its literals when they decide it", () => {
+    if (!preFilter) throw new Error("no prefilter");
+    expect(preFilterVerdict(preFilter, "status: INACTIVE")).toBe("match");
+    expect(preFilterVerdict(preFilter, "update the product")).toBe("unknown");
+    expect(preFilterVerdict(preFilter, "nothing here")).toBe("no-match");
+  });
+
+  it("leaves text with İ to RE2 under ignoreCase", () => {
+    // "İ" lowercases to "i" and a combining dot; RE2 does not fold it to i.
+    const dotted = requiredLiterals("i", true);
+    if (!dotted) throw new Error("no prefilter");
+    expect(preFilterVerdict(dotted, "İ")).toBe("unknown");
+    expect(preFilterVerdict(dotted, "I")).toBe("match");
+    expect(preFilterVerdict(dotted, "über I")).toBe("match");
+  });
+});
+
 describe("preFilterMatches", () => {
   it("needs every needle of one group", () => {
-    const preFilter = { groups: [["product", "update"]], ignoreCase: false };
+    const preFilter = {
+      groups: [["product", "update"]],
+      exact: [],
+      ignoreCase: false,
+    };
     expect(preFilterMatches(preFilter, "update the product")).toBe(true);
     expect(preFilterMatches(preFilter, "product only")).toBe(false);
   });
@@ -95,6 +133,7 @@ describe("preFilterMatches", () => {
   it("matches when any group is complete", () => {
     const preFilter = {
       groups: [["alpha"], ["beta", "gamma"]],
+      exact: ["alpha"],
       ignoreCase: false,
     };
     expect(preFilterMatches(preFilter, "gamma beta")).toBe(true);
@@ -103,7 +142,11 @@ describe("preFilterMatches", () => {
 
   it("folds case as RE2 does, including the long s and the Kelvin sign", () => {
     // RE2 matches /sap/i in "ſap" and /kelvin/i in "Kelvin" (U+212A).
-    const preFilter = { groups: [["sap"], ["kelvin"]], ignoreCase: true };
+    const preFilter = {
+      groups: [["sap"], ["kelvin"]],
+      exact: ["sap", "kelvin"],
+      ignoreCase: true,
+    };
     expect(preFilterMatches(preFilter, "ſAP")).toBe(true);
     expect(preFilterMatches(preFilter, "Kelvin")).toBe(true);
     expect(preFilterMatches(preFilter, "SA P")).toBe(false);

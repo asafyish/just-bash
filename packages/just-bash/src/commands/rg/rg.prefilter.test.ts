@@ -11,6 +11,7 @@ const files = {
   "/w/a.txt": "abbbc\nbarbaz\nupdate the product\nproduct only\n",
   "/w/b.txt": "nothing here\nat all\n",
   "/w/fold.txt": "ſAP order\nKelvin scale\nplain\n",
+  "/w/dotted.txt": "İ\nI\n",
 };
 
 async function rg(command: string) {
@@ -46,6 +47,20 @@ describe("rg required-literal prefilter", () => {
     });
   });
 
+  it("leaves a non-ASCII line to RE2 under -i, which does not fold İ to i", async () => {
+    const result = await rg("rg -n -i i dotted.txt");
+    expect(result).toMatchObject({ exitCode: 0, stdout: "2:I\n", stderr: "" });
+  });
+
+  it("reports match positions with -o and --column", async () => {
+    const result = await rg("rg -o --column 'product|upd.te' a.txt");
+    expect(result).toMatchObject({
+      exitCode: 0,
+      stdout: "3:1:update\n3:12:product\n4:1:product\n",
+      stderr: "",
+    });
+  });
+
   it("prints every line of a file without the literal under -v", async () => {
     const result = await rg("rg -v needle b.txt");
     expect(result).toMatchObject({
@@ -72,7 +87,7 @@ describe("rg required-literal prefilter", () => {
     });
     expect(await rg("rg --files-without-match product")).toMatchObject({
       exitCode: 0,
-      stdout: "b.txt\nfold.txt\n",
+      stdout: "b.txt\ndotted.txt\nfold.txt\n",
       stderr: "",
     });
   });
