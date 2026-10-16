@@ -35,7 +35,7 @@ const sedHelp = {
     "-n, --quiet, --silent  suppress automatic printing of pattern space",
     "-e script              add the script to commands to be executed",
     "-f script-file         read script from file",
-    "-i, --in-place         edit files in place",
+    "-i[SUFFIX], --in-place[=SUFFIX]  edit in place; optionally keep a backup",
     "-E, -r, --regexp-extended  use extended regular expressions",
     "    --help             display this help and exit",
   ],
@@ -361,6 +361,7 @@ export const sedCommand: RuntimeCommand = {
     const scriptFiles: string[] = [];
     let silent = false;
     let inPlace = false;
+    let backupSuffix = "";
     let extendedRegex = false;
     const files: string[] = [];
 
@@ -371,8 +372,9 @@ export const sedCommand: RuntimeCommand = {
         silent = true;
       } else if (arg === "-i" || arg === "--in-place") {
         inPlace = true;
-      } else if (arg.startsWith("-i")) {
+      } else if (arg.startsWith("-i") || arg.startsWith("--in-place=")) {
         inPlace = true;
+        backupSuffix = arg.startsWith("-i") ? arg.slice(2) : arg.slice(11);
       } else if (arg === "-E" || arg === "-r" || arg === "--regexp-extended") {
         extendedRegex = true;
       } else if (arg === "-e") {
@@ -515,6 +517,14 @@ export const sedCommand: RuntimeCommand = {
               stderr: `${result.errorMessage}\n`,
               exitCode: result.exitCode ?? 1,
             };
+          }
+          if (backupSuffix) {
+            const backup = backupSuffix.includes("*")
+              ? backupSuffix.replaceAll("*", file)
+              : file + backupSuffix;
+            await withDefenseContext("in-place backup", () =>
+              ctx.fs.cp(filePath, ctx.fs.resolvePath(ctx.cwd, backup)),
+            );
           }
           await withDefenseContext("in-place output write", () =>
             ctx.fs.writeFile(filePath, result.output),
