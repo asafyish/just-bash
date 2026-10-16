@@ -57,9 +57,22 @@ export function splitLines(content: string): FileLines {
  * final line without one never compares equal to the same text with one —
  * that is what makes GNU report `\ No newline at end of file` as a difference.
  */
-function tokenize(file: FileLines, ignoreCase: boolean): string[] {
+interface IgnoreOptions {
+  ignoreAllSpace?: boolean;
+  ignoreSpaceChange?: boolean;
+  ignoreBlankLines?: boolean;
+}
+
+function tokenize(
+  file: FileLines,
+  ignoreCase: boolean,
+  options: IgnoreOptions,
+): string[] {
   const last = file.lines.length - 1;
   return file.lines.map((line, i) => {
+    if (options.ignoreAllSpace) line = line.replace(/\s/g, "");
+    else if (options.ignoreSpaceChange)
+      line = line.replace(/\s+/g, " ").trimEnd();
     const token = i === last && file.noEol ? line : `${line}\n`;
     return ignoreCase ? token.toLowerCase() : token;
   });
@@ -70,10 +83,11 @@ export function computeChanges(
   oldFile: FileLines,
   newFile: FileLines,
   ignoreCase: boolean,
+  options: IgnoreOptions = {},
 ): Change[] {
   const parts = Diff.diffArrays(
-    tokenize(oldFile, ignoreCase),
-    tokenize(newFile, ignoreCase),
+    tokenize(oldFile, ignoreCase, options),
+    tokenize(newFile, ignoreCase, options),
   );
 
   const changes: Change[] = [];
@@ -107,7 +121,17 @@ export function computeChanges(
       }
       i++;
     }
-    changes.push(change);
+    const isBlank = (line: string) =>
+      options.ignoreAllSpace || options.ignoreSpaceChange
+        ? /^\s*$/.test(line)
+        : line === "";
+    if (
+      !options.ignoreBlankLines ||
+      !oldFile.lines.slice(change.oldStart, oldIdx).every(isBlank) ||
+      !newFile.lines.slice(change.newStart, newIdx).every(isBlank)
+    ) {
+      changes.push(change);
+    }
   }
   return changes;
 }
@@ -122,7 +146,7 @@ export function computeChanges(
  * alone. A lone backslash does not trigger quoting but is escaped once some
  * other character has.
  */
-function quoteFilename(name: string): string {
+export function quoteFilename(name: string): string {
   if (!/[\s"\u0000-\u001f\u007f]/.test(name)) return name;
   let out = '"';
   for (const ch of name) {
