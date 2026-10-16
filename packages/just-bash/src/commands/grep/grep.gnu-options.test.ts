@@ -9,7 +9,7 @@ const setup = () =>
 describe("grep GNU options", () => {
   it("accepts attached and bundled values and long value options", async () => {
     const result = await setup().exec(
-      "grep -nA1 alpha /w/a.txt; grep --context=1 --regexp=alpha /w/a.txt; grep -rnealpha --include '*.txt' --exclude '*.bin' /w",
+      "grep -m -1 --color=tty -nA1 alpha /w/a.txt; grep --max-count=-1 --color=yes --context=1 --regexp=alpha /w/a.txt; grep -rnealpha --include '*.txt' --exclude '*.bin' /w",
     );
     expect(result).toMatchObject({
       stdout: "1:alpha\n2-gamma\nalpha\ngamma\n/w/a.txt:1:alpha\n",
@@ -35,6 +35,12 @@ describe("grep GNU options", () => {
       ["grep --wat alpha", "grep: unrecognized option '--wat'\n"],
       ["grep -nA", "grep: option requires an argument -- 'A'\n"],
       ["grep -nAwrong alpha", "grep: invalid context length argument: wrong\n"],
+      ["grep -s alpha /w", ""],
+      [
+        "grep -s -f /missing /w/a.txt",
+        "grep: /missing: No such file or directory\n",
+      ],
+      ["grep -s -f '' /w/a.txt", "grep: : No such file or directory\n"],
     ]) {
       expect(await bash.exec(script)).toMatchObject({
         stdout: "",

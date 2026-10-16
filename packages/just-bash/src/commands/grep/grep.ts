@@ -287,14 +287,18 @@ export const grepCommand: RuntimeCommand = {
               binaryMode = value;
             } else {
               const number = Number(value);
-              if (!/^\+?\d+$/.test(value) || !Number.isSafeInteger(number)) {
+              if (
+                (valueOption !== "m" || value !== "-1") &&
+                (!/^\+?\d+$/.test(value) || !Number.isSafeInteger(number))
+              ) {
                 return {
                   stdout: "",
                   stderr: `grep: invalid ${valueOption === "m" ? "max count" : "context length"} argument: ${value}\n`,
                   exitCode: 2,
                 };
               }
-              if (valueOption === "m") maxCount = number;
+              if (valueOption === "m")
+                maxCount = number === -1 ? undefined : number;
               if (valueOption === "A" || valueOption === "C")
                 afterContext = number;
               if (valueOption === "B" || valueOption === "C")
@@ -347,7 +351,17 @@ export const grepCommand: RuntimeCommand = {
           } else if (flag === "--color" || flag === "--colour") {
             if (
               equals >= 0 &&
-              !["always", "auto", "never"].includes(arg.slice(equals + 1))
+              ![
+                "always",
+                "yes",
+                "force",
+                "auto",
+                "tty",
+                "if-tty",
+                "never",
+                "no",
+                "none",
+              ].includes(arg.slice(equals + 1).toLowerCase())
             )
               return {
                 stdout: "",
@@ -411,9 +425,7 @@ export const grepCommand: RuntimeCommand = {
           if (stat.isDirectory) {
             return {
               stdout: "",
-              stderr: noMessages
-                ? ""
-                : `grep: ${patternFile}: Is a directory\n`,
+              stderr: `grep: ${patternFile}: Is a directory\n`,
               exitCode: 2,
             };
           }
@@ -422,9 +434,7 @@ export const grepCommand: RuntimeCommand = {
           rethrowFatalExecutionError(error);
           return {
             stdout: "",
-            stderr: noMessages
-              ? ""
-              : `grep: ${patternFile}: No such file or directory\n`,
+            stderr: `grep: ${patternFile}: No such file or directory\n`,
             exitCode: 2,
           };
         }
@@ -812,9 +822,7 @@ export const grepCommand: RuntimeCommand = {
 
         if ("error" in res && res.error) {
           if (!noMessages) stderr += res.error;
-          if (!res.error.includes("Is a directory")) {
-            anyError = true;
-          }
+          anyError = true;
           continue;
         }
 
