@@ -16,15 +16,33 @@ describe("cmp", () => {
     });
   });
 
+  it("charges only compared bytes and bounds retained input", async () => {
+    const files = { "/a": "a".repeat(5000), "/b": "b".repeat(5000) };
+    expect(
+      await new Bash({ files, executionLimits: { maxWorkUnits: 100 } }).exec(
+        "cmp -s /a /b",
+      ),
+    ).toMatchObject({ stdout: "", stderr: "", exitCode: 1 });
+    expect(
+      await new Bash({ files, executionLimits: { maxLiveBytes: 4096 } }).exec(
+        "cmp /a /b",
+      ),
+    ).toMatchObject({
+      stdout: "",
+      stderr: "bash: cmp: live byte limit exceeded (4096 bytes)\n",
+      exitCode: 126,
+    });
+  });
+
   it("lists byte positions and octal values with -l", async () => {
     const bash = new Bash({
       files: {
-        "/a": new Uint8Array([0, 255, 10]),
-        "/b": new Uint8Array([1, 254, 10]),
+        "/a": new Uint8Array([0, 255, 10, 0, 0, 0, 0, 0, 0, 0]),
+        "/b": new Uint8Array([1, 254, 10, 0, 0, 0, 0, 0, 0, 0]),
       },
     });
     expect(await bash.exec("cmp -l /a /b")).toMatchObject({
-      stdout: "1   0   1\n2 377 376\n",
+      stdout: " 1   0   1\n 2 377 376\n",
       stderr: "",
       exitCode: 1,
     });
@@ -46,6 +64,11 @@ describe("cmp", () => {
       stdout: "",
       stderr: "",
       exitCode: 1,
+    });
+    expect(await bash.exec("cmp -sl /a /b")).toMatchObject({
+      stdout: "",
+      stderr: "cmp: options -l and -s are incompatible\n",
+      exitCode: 2,
     });
     expect(await bash.exec("cmp -s /missing /a")).toMatchObject({
       stdout: "",
