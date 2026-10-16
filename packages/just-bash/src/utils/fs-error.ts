@@ -8,6 +8,7 @@ const reasons = new Map([
   ["EPERM", "Operation not permitted"],
   ["EROFS", "Read-only file system"],
   ["ENOSPC", "No space left on device"],
+  ["EFBIG", "File too large"],
   ["EIO", "Input/output error"],
   ["ENAMETOOLONG", "File name too long"],
   ["ELOOP", "Too many levels of symbolic links"],

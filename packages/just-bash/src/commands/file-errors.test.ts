@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../Bash.js";
 import { InMemoryFs } from "../fs/in-memory-fs/index.js";
 
-class ReadOnlyFs extends InMemoryFs {
+class FailingWritesFs extends InMemoryFs {
+  errorCode = "EROFS";
   override async writeFile(): Promise<void> {
     throw Object.assign(new Error("host path must not be printed"), {
-      code: "EROFS",
+      code: this.errorCode,
     });
   }
 }
@@ -24,13 +25,19 @@ describe("file error messages", () => {
     ["tee /ro/f.txt <<< hi", "tee", "hi\n"],
     ["sed -i 's/x/y/' /ro/f.txt", "sed", ""],
   ])("reports write refusal for %s", async (script, command, stdout) => {
-    const fs = new ReadOnlyFs({ "/ro/f.txt": "x\n" });
-    const result = await new Bash({ fs }).exec(script);
-    expect(result).toMatchObject({
-      stdout,
-      stderr: `${command}: /ro/f.txt: Read-only file system\n`,
-      exitCode: 1,
-    });
-    expect(await fs.readFile("/ro/f.txt")).toBe("x\n");
+    for (const [code, reason] of [
+      ["EROFS", "Read-only file system"],
+      ["EFBIG", "File too large"],
+    ]) {
+      const fs = new FailingWritesFs({ "/ro/f.txt": "x\n" });
+      fs.errorCode = code;
+      const result = await new Bash({ fs }).exec(script);
+      expect(result).toMatchObject({
+        stdout,
+        stderr: `${command}: /ro/f.txt: ${reason}\n`,
+        exitCode: 1,
+      });
+      expect(await fs.readFile("/ro/f.txt")).toBe("x\n");
+    }
   });
 });
