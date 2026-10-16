@@ -372,6 +372,7 @@ export const sedCommand: RuntimeCommand = {
         silent = true;
       } else if (arg === "-i" || arg === "--in-place") {
         inPlace = true;
+        backupSuffix = "";
       } else if (arg.startsWith("-i") || arg.startsWith("--in-place=")) {
         inPlace = true;
         backupSuffix = arg.startsWith("-i") ? arg.slice(2) : arg.slice(11);
@@ -391,7 +392,9 @@ export const sedCommand: RuntimeCommand = {
         // "-" is stdin marker, treat as a file
         files.push(arg);
       } else if (arg.startsWith("-") && arg.length > 1) {
-        for (const c of arg.slice(1)) {
+        const inPlaceIndex = arg.indexOf("i");
+        const flags = inPlaceIndex < 0 ? arg : arg.slice(0, inPlaceIndex + 1);
+        for (const c of flags.slice(1)) {
           if (
             c !== "n" &&
             c !== "e" &&
@@ -403,15 +406,22 @@ export const sedCommand: RuntimeCommand = {
             return unknownOption("sed", `-${c}`);
           }
         }
-        if (arg.includes("n")) silent = true;
-        if (arg.includes("i")) inPlace = true;
-        if (arg.includes("E") || arg.includes("r")) extendedRegex = true;
-        if (arg.includes("e") && !arg.includes("n") && !arg.includes("i")) {
+        if (flags.includes("n")) silent = true;
+        if (inPlaceIndex >= 0) {
+          inPlace = true;
+          backupSuffix = arg.slice(inPlaceIndex + 1);
+        }
+        if (flags.includes("E") || flags.includes("r")) extendedRegex = true;
+        if (
+          flags.includes("e") &&
+          !flags.includes("n") &&
+          !flags.includes("i")
+        ) {
           if (i + 1 < args.length) {
             scripts.push(args[++i]);
           }
         }
-        if (arg.includes("f") && !arg.includes("e")) {
+        if (flags.includes("f") && !flags.includes("e")) {
           if (i + 1 < args.length) {
             scriptFiles.push(args[++i]);
           }
@@ -522,9 +532,15 @@ export const sedCommand: RuntimeCommand = {
             const backup = backupSuffix.includes("*")
               ? backupSuffix.replaceAll("*", file)
               : file + backupSuffix;
-            await withDefenseContext("in-place backup", () =>
-              ctx.fs.cp(filePath, ctx.fs.resolvePath(ctx.cwd, backup)),
-            );
+            const backupPath = ctx.fs.resolvePath(ctx.cwd, backup);
+            if (backupPath !== filePath) {
+              await withDefenseContext("in-place backup", async () => {
+                const source = await ctx.fs.realpath(filePath);
+                if (backupPath === source) return;
+                await ctx.fs.rm(backupPath, { force: true });
+                await ctx.fs.cp(source, backupPath);
+              });
+            }
           }
           await withDefenseContext("in-place output write", () =>
             ctx.fs.writeFile(filePath, result.output),
