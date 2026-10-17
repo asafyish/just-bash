@@ -322,7 +322,7 @@ export async function executeSearch(
   // https://github.com/BurntSushi/ripgrep/blob/15.2.0/crates/cli/src/lib.rs#L204-L208
   if (
     inputPaths.length === 0 &&
-    (ctx.stdinProvided || stdinText.length > 0) &&
+    (ctx.stdinProvided || ctx.stdio?.hasInput || stdinText.length > 0) &&
     !ctx.stdinUnavailable &&
     !stdinConsumedByPatternFile
   ) {

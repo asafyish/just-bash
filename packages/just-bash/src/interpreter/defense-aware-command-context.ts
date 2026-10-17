@@ -244,6 +244,7 @@ export function createDefenseAwareCommandContext(
 
   if (ctx.stdio) {
     wrappedCtx.stdio = {
+      hasInput: ctx.stdio.hasInput,
       read: wrapFunction(
         ctx.stdio.read,
         ctx.requireDefenseContext,

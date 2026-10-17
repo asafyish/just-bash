@@ -135,4 +135,28 @@ describe("rg streaming pipelines", () => {
       exitCode: 1,
     });
   });
+  it("distinguishes a producer from an empty upstream pipe", async () => {
+    const contexts: boolean[] = [];
+    const rg = defineCommand(
+      "rg",
+      async (args, ctx) => {
+        contexts.push(ctx.stdio?.hasInput ?? false);
+        if (!ctx.origCommand) throw new Error("Expected original rg");
+        return ctx.origCommand(args);
+      },
+      { streaming: true },
+    );
+    const bash = new Bash({
+      files: { "/src/a": "needle file\n" },
+      cwd: "/src",
+      customCommands: [rg],
+    });
+    expect(
+      await bash.exec("rg --no-line-number needle | head -n 1"),
+    ).toMatchObject({ stdout: "a:needle file\n", stderr: "", exitCode: 0 });
+    expect(
+      await bash.exec("set -o pipefail; seq 0 | rg needle | cat"),
+    ).toMatchObject({ stdout: "", stderr: "", exitCode: 1 });
+    expect(contexts).toEqual([false, true]);
+  });
 });
