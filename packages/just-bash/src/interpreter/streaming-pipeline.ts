@@ -184,6 +184,7 @@ export async function executeStreamingPipeline(
           }
         };
         const stdio: CommandStdio = {
+          hasInput: input !== undefined,
           read: async () => {
             const chunk = input ? await input.read() : null;
             if (chunk !== null) {

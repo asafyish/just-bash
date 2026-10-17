@@ -217,6 +217,7 @@ const commandLoaders: LazyCommandDef<CommandName>[] = [
   },
   {
     name: "rg",
+    streaming: true,
     load: async () => (await import("./rg/rg.js")).rgCommand,
   },
   {

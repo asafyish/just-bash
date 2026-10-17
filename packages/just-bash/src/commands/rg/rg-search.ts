@@ -6,6 +6,7 @@ import { gunzipSync } from "node:zlib";
 import { BoundedStringBuilder } from "../../bounded-builder.js";
 import {
   decodeBytesToUtf8,
+  encodeUtf8ToBytes,
   latin1FromBytes,
   readBytesFrom,
   unsafeBytesFromLatin1,
@@ -13,10 +14,12 @@ import {
 } from "../../encoding.js";
 import type { ResourceLease } from "../../execution-scope.js";
 import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
+import type { FsStat } from "../../fs/interface.js";
 import { FileTraversalBudget } from "../../fs/traversal.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import { createUserRegex, type UserRegex } from "../../regex/index.js";
+import { readCommandStdin } from "../../streams/command-stdio.js";
 import type { ExecResult, RuntimeCommandContext } from "../../types.js";
 import {
   buildRegex,
@@ -162,6 +165,7 @@ export async function executeSearch(
   // decoded lines remain live until regex compilation completes, so keep a
   // conservative lease for every source and release all of them together.
   const patterns = options.patterns.slice();
+  let patternStdin: Awaited<ReturnType<typeof readCommandStdin>> | undefined;
   const patternSourceLeases: ResourceLease[] = [];
   let aggregatePatternInputBytes = 0;
   let regex: UserRegex;
@@ -177,8 +181,9 @@ export async function executeSearch(
         let contentBytes: number;
 
         if (patternFile === "-") {
-          rawContent = ctx.stdin;
-          contentBytes = latin1FromBytes(ctx.stdin).length;
+          patternStdin ??= await readCommandStdin(ctx);
+          rawContent = patternStdin;
+          contentBytes = latin1FromBytes(rawContent).length;
           aggregatePatternInputBytes = accountPatternInput(
             ctx,
             contentBytes,
@@ -269,10 +274,13 @@ export async function executeSearch(
   // Skip when `-f -` already consumed stdin for patterns to avoid
   // double-consuming it as both pattern source and search input.
   const stdinConsumedByPatternFile = options.patternFiles.includes("-");
-  const stdinText = decodeBytesToUtf8(ctx.stdin);
+  const stdinText =
+    inputPaths.length === 0 && !stdinConsumedByPatternFile
+      ? decodeBytesToUtf8(await readCommandStdin(ctx))
+      : "";
   if (
     inputPaths.length === 0 &&
-    stdinText.length > 0 &&
+    (ctx.stdio?.hasInput || stdinText.length > 0) &&
     !stdinConsumedByPatternFile
   ) {
     const content = stdinText;
@@ -349,6 +357,56 @@ export async function executeSearch(
   }
   for (const spec of options.typeAdd) {
     typeRegistry.addType(spec);
+  }
+
+  // Single-root pipelines discover and search one file at a time.
+  // Aggregate output modes retain their existing collection semantics.
+  if (ctx.stdio && paths.length === 1 && !options.json && !options.stats) {
+    const path = paths[0];
+    const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
+    let stat: FsStat;
+    try {
+      stat = await ctx.fs.stat(fullPath);
+    } catch (error) {
+      rethrowFatalExecutionError(error);
+      return {
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      };
+    }
+    const files = stat.isDirectory
+      ? walkDirectory(
+          ctx,
+          path,
+          fullPath,
+          0,
+          options,
+          gitignore,
+          typeRegistry,
+          new FileTraversalBudget({
+            limits: ctx.limits,
+            signal: ctx.signal,
+            executionScope: ctx.executionScope,
+            site: "rg",
+          }),
+          new Set(),
+        )
+      : stat.isFile &&
+          (options.maxFilesize <= 0 || stat.size <= options.maxFilesize) &&
+          shouldIncludeFile(path, options, gitignore, fullPath, typeRegistry)
+        ? [path]
+        : [];
+    return searchFiles(
+      ctx,
+      files,
+      regex,
+      options,
+      !options.noFilename && (options.withFilename || !stat.isFile),
+      options.lineNumber &&
+        (explicitLineNumbers || (!stat.isFile && !options.onlyMatching)),
+      kResetGroup,
+    );
   }
 
   // Collect files to search
@@ -489,7 +547,7 @@ async function collectFiles(
         }
       } else if (stat.isDirectory) {
         directoryCount++;
-        await walkDirectory(
+        for await (const file of walkDirectory(
           ctx,
           path,
           fullPath,
@@ -497,10 +555,17 @@ async function collectFiles(
           options,
           gitignore,
           typeRegistry,
-          files,
           traversalBudget,
           new Set(),
-        );
+        )) {
+          if (files.length >= ctx.limits.maxArrayElements) {
+            throw new ExecutionLimitError(
+              `rg: file collection limit exceeded (${ctx.limits.maxArrayElements})`,
+              "array_elements",
+            );
+          }
+          files.push(file);
+        }
       }
     } catch (error) {
       rethrowFatalExecutionError(error);
@@ -519,7 +584,7 @@ async function collectFiles(
 /**
  * Recursively walk a directory and collect matching files
  */
-async function walkDirectory(
+async function* walkDirectory(
   ctx: RuntimeCommandContext,
   relativePath: string,
   absolutePath: string,
@@ -527,10 +592,9 @@ async function walkDirectory(
   options: RgOptions,
   gitignore: GitignoreManager | null,
   typeRegistry: FileTypeRegistry,
-  files: string[],
   budget: FileTraversalBudget,
   activeDirectories: Set<string>,
-): Promise<void> {
+): AsyncGenerator<string> {
   if (depth >= options.maxDepth) {
     return;
   }
@@ -566,6 +630,40 @@ async function walkDirectory(
           name,
           isFile: undefined as boolean | undefined,
         }));
+
+    if (options.sort === "path") {
+      if (entries.length > ctx.limits.maxArrayElements) {
+        throw new ExecutionLimitError(
+          `rg: directory entry limit exceeded (${ctx.limits.maxArrayElements})`,
+          "array_elements",
+        );
+      }
+      const keys = new Map<string, string>();
+      for (const entry of entries) {
+        budget.checkpoint();
+        let isDirectory = "isDirectory" in entry && entry.isDirectory === true;
+        if (
+          entry.isFile === undefined ||
+          (options.followSymlinks &&
+            "isSymbolicLink" in entry &&
+            entry.isSymbolicLink)
+        ) {
+          try {
+            isDirectory = (
+              await ctx.fs.stat(ctx.fs.resolvePath(absolutePath, entry.name))
+            ).isDirectory;
+          } catch (error) {
+            rethrowFatalExecutionError(error);
+          }
+        }
+        keys.set(entry.name, entry.name + (isDirectory ? "/" : ""));
+      }
+      entries.sort((a, b) => {
+        const left = keys.get(a.name) as string;
+        const right = keys.get(b.name) as string;
+        return left < right ? -1 : left > right ? 1 : 0;
+      });
+    }
 
     for (const entry of entries) {
       budget.checkpoint();
@@ -671,7 +769,7 @@ async function walkDirectory(
       }
 
       if (isDirectory) {
-        await walkDirectory(
+        yield* walkDirectory(
           ctx,
           entryRelativePath,
           entryAbsolutePath,
@@ -679,7 +777,6 @@ async function walkDirectory(
           options,
           gitignore,
           typeRegistry,
-          files,
           budget,
           activeDirectories,
         );
@@ -705,13 +802,7 @@ async function walkDirectory(
             typeRegistry,
           )
         ) {
-          if (files.length >= ctx.limits.maxArrayElements) {
-            throw new ExecutionLimitError(
-              `rg: file collection limit exceeded (${ctx.limits.maxArrayElements})`,
-              "array_elements",
-            );
-          }
-          files.push(entryRelativePath);
+          yield entryRelativePath;
         }
       }
     }
@@ -1119,9 +1210,24 @@ interface JsonMatch {
 /**
  * Search files and produce output
  */
+async function* fileBatches(
+  files: string[] | AsyncIterable<string>,
+  size: number,
+): AsyncGenerator<string[]> {
+  let batch: string[] = [];
+  for await (const file of files) {
+    batch.push(file);
+    if (batch.length === size) {
+      yield batch;
+      batch = [];
+    }
+  }
+  if (batch.length) yield batch;
+}
+
 async function searchFiles(
   ctx: RuntimeCommandContext,
-  files: string[],
+  files: string[] | AsyncIterable<string>,
   regex: UserRegex,
   options: RgOptions,
   showFilename: boolean,
@@ -1129,6 +1235,10 @@ async function searchFiles(
   kResetGroup?: number,
 ): Promise<ExecResult> {
   let stdout = "";
+  let hasOutput = false;
+  let searchedFiles = 0;
+  const streamingOutput =
+    !options.json && !options.stats ? ctx.stdio : undefined;
   let anyMatch = false;
 
   // JSON mode tracking
@@ -1139,9 +1249,11 @@ async function searchFiles(
 
   // Compressed files retain both the decompressed byte buffer and decoded
   // string while being searched. Keep their concurrency deliberately small.
-  const BATCH_SIZE = options.searchZip ? 2 : 50;
-  outer: for (let i = 0; i < files.length; i += BATCH_SIZE) {
-    const batch = files.slice(i, i + BATCH_SIZE);
+  const batchSize = streamingOutput ? 1 : options.searchZip ? 2 : 50;
+  outer: for await (const batch of fileBatches(files, batchSize)) {
+    // Observe downstream closure even when the next file has no matches.
+    if (streamingOutput) await streamingOutput.write(unsafeBytesFromLatin1(""));
+    searchedFiles += batch.length;
 
     const results = await Promise.all(
       batch.map(async (file) => {
@@ -1304,6 +1416,13 @@ async function searchFiles(
         stdout += result.output;
       }
       (res as { lease?: ResourceLease }).lease?.release();
+      if (stdout) {
+        hasOutput = true;
+        if (streamingOutput && !options.quiet) {
+          await streamingOutput.write(encodeUtf8ToBytes(stdout));
+          stdout = "";
+        }
+      }
     }
   }
 
@@ -1316,7 +1435,7 @@ async function searchFiles(
           elapsed_total: { secs: 0, nanos: 0, human: "0s" },
           stats: {
             elapsed: { secs: 0, nanos: 0, human: "0s" },
-            searches: files.length,
+            searches: searchedFiles,
             searches_with_match: filesWithMatch,
             bytes_searched: bytesSearched,
             bytes_printed: 0,
@@ -1340,7 +1459,7 @@ async function searchFiles(
       `${totalMatches} matches`,
       `${totalMatches} matched lines`,
       `${filesWithMatch} files contained matches`,
-      `${files.length} files searched`,
+      `${searchedFiles} files searched`,
       `${bytesSearched} bytes searched`,
     ].join("\n");
     finalStdout += `${statsOutput}\n`;
@@ -1363,7 +1482,7 @@ async function searchFiles(
   let exitCode: number;
   if (options.filesWithoutMatch) {
     // Success means we found files without matches (stdout has content)
-    exitCode = stdout.length > 0 ? 0 : 1;
+    exitCode = hasOutput || stdout.length > 0 ? 0 : 1;
   } else {
     exitCode = anyMatch ? 0 : 1;
   }

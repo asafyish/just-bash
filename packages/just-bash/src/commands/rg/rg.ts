@@ -89,6 +89,7 @@ EXAMPLES:
 
 export const rgCommand: RuntimeCommand = {
   name: "rg",
+  streaming: true,
 
   async execute(
     args: string[],
