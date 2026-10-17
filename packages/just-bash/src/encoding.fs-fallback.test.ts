@@ -8,7 +8,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { Bash } from "./Bash.js";
-import { type ByteString, bytesFromUint8Array, latin1FromBytes } from "./encoding.js";
+import {
+  type ByteString,
+  bytesFromUint8Array,
+  latin1FromBytes,
+} from "./encoding.js";
 import { InMemoryFs } from "./fs/in-memory-fs/in-memory-fs.js";
 import type { IFileSystem } from "./fs/interface.js";
 
@@ -69,9 +73,7 @@ describe("readFileBytes back-compat fallback", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-    const back = Uint8Array.from(latin1FromBytes(s), (c) =>
-      c.charCodeAt(0),
-    );
+    const back = Uint8Array.from(latin1FromBytes(s), (c) => c.charCodeAt(0));
     expect(back).toEqual(buf);
   });
 });

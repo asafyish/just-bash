@@ -29,7 +29,7 @@ describe("search batch boundaries", () => {
       getCandidates(
         remote.fs,
         ["/a"],
-        { needles: ["foo"], ignoreCase: false },
+        { groups: [["foo"]], exact: ["foo"], ignoreCase: false },
         controller.signal,
       ),
     ).rejects.toThrow("stopped");

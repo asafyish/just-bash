@@ -7,7 +7,7 @@ import { MountableFs } from "./mountable-fs.js";
 describe("mounted search capabilities", () => {
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("combines accelerated and ordinary mounts: %s", async (command) => {
     const remote = remoteFs({ "/a": "foo\n", "/b": "miss\n" });
     const fs = new MountableFs({

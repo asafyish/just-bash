@@ -249,7 +249,7 @@ export class MountableFs implements IFileSystem {
 
   get readMany(): IFileSystem["readMany"] {
     if (this.baseFs.readMany) return this.readMountedBatch;
-    for (const { filesystem } of this.mounts.values()) {
+    for (const filesystem of this.mounts.values()) {
       if (filesystem.readMany) return this.readMountedBatch;
     }
     return undefined;

@@ -172,7 +172,9 @@ export function searchContent(
     !preFilterMatches(preFilter, content)
   ) {
     if (countOnly || countMatches) {
-      const countStr = filename ? `${filename}:0` : "0";
+      const countStr = filename
+        ? `${filename}${filenameSeparator ?? ":"}0`
+        : "0";
       return { output: `${countStr}\n`, matched: false, matchCount: 0 };
     }
     return { output: "", matched: false, matchCount: 0 };

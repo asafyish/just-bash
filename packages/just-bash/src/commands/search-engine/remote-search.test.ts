@@ -67,7 +67,7 @@ describe("remote filesystem search", () => {
 
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("filters before reading through the command wrapper: %s", async (command) => {
     const remote = remoteFs({ "/a": "foo\n", "/b": "miss\n" });
     const result = await new Bash({
@@ -83,7 +83,7 @@ describe("remote filesystem search", () => {
 
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("verifies false positives: %s", async (command) => {
     const remote = remoteFs(
       { "/a": "foo\n", "/b": "miss\n" },
@@ -98,7 +98,7 @@ describe("remote filesystem search", () => {
 
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("decline still uses bulk reads: %s", async (command) => {
     const remote = remoteFs(
       { "/a": "foo\n", "/b": "miss\n" },
@@ -148,7 +148,7 @@ describe("remote filesystem search", () => {
 
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("does not scan after a backend failure: %s", async (command) => {
     const remote = remoteFs({ "/a": "foo\n" });
     remote.fs.searchCandidates = async () => {
@@ -161,7 +161,7 @@ describe("remote filesystem search", () => {
 
   it.each([
     "grep -rn",
-    "rg -s",
+    "rg -sn",
   ])("reads all batches without truncation: %s", async (command) => {
     const many = Object.fromEntries(
       Array.from({ length: 123 }, (_, i) => [
@@ -219,7 +219,9 @@ describe("remote filesystem search", () => {
       executionLimits: { maxLiveBytes: 250 },
     }).exec("rg -sq foo /a /b; rg -sq foo /a /b");
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toBe(
+      "rg: /b: Unable to read file\nrg: /b: Unable to read file\n",
+    );
     expect(result.exitCode).toBe(0);
     expect(remote.batches).toEqual([
       ["/a", "/b"],
