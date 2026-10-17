@@ -6,8 +6,9 @@
  * throw `TypeError: readFileBytes is not a function` for any user-supplied
  * filesystem written before the method existed.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "./Bash.js";
+import { type ByteString, bytesFromUint8Array, latin1FromBytes } from "./encoding.js";
 import { InMemoryFs } from "./fs/in-memory-fs/in-memory-fs.js";
 import type { IFileSystem } from "./fs/interface.js";
 
@@ -48,5 +49,29 @@ describe("readFileBytes back-compat fallback", () => {
       stderr: r.stderr,
       exitCode: r.exitCode,
     }).toEqual({ stdout: "한글", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    false,
+    true,
+  ])("round-trips large byte views (browser: %s)", (browser) => {
+    const buf = Uint8Array.from(
+      { length: 256 * 1024 + 2 },
+      (_, i) => i % 256,
+    ).subarray(1, -1);
+    let s: ByteString;
+    try {
+      if (browser) vi.stubGlobal("Buffer", undefined);
+      s = bytesFromUint8Array(buf);
+      expect(() => bytesFromUint8Array(buf, buf.length - 1)).toThrow(
+        "byte conversion limit exceeded",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const back = Uint8Array.from(latin1FromBytes(s), (c) =>
+      c.charCodeAt(0),
+    );
+    expect(back).toEqual(buf);
   });
 });
