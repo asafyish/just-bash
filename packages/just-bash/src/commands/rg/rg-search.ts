@@ -16,7 +16,6 @@ import {
 } from "../../encoding.js";
 import type { ResourceLease } from "../../execution-scope.js";
 import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
-import type { FsStat } from "../../fs/interface.js";
 import { readBatch } from "../../fs/read-many.js";
 import { FileTraversalBudget } from "../../fs/traversal.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
@@ -35,6 +34,7 @@ import {
 import { FileTypeRegistry } from "./file-types.js";
 import { GitignoreManager, loadGitignores } from "./gitignore.js";
 import type { RgOptions } from "./rg-options.js";
+import { canStreamStdin, searchStdinStream } from "./rg-stdin-stream.js";
 
 /**
  * Check if data is gzip compressed (magic bytes)
@@ -314,6 +314,14 @@ export async function executeSearch(
   // Skip when `-f -` already consumed stdin for patterns to avoid
   // double-consuming it as both pattern source and search input.
   const stdinConsumedByPatternFile = options.patternFiles.includes("-");
+  if (
+    inputPaths.length === 0 &&
+    ctx.stdio?.hasInput &&
+    !stdinConsumedByPatternFile &&
+    canStreamStdin(options)
+  ) {
+    return searchStdinStream(ctx, regex, options);
+  }
   const stdinText =
     inputPaths.length === 0 && !stdinConsumedByPatternFile
       ? decodeBytesToUtf8(await readCommandStdin(ctx))
@@ -398,56 +406,23 @@ export async function executeSearch(
     );
   }
 
-  // Single-root pipelines discover and search one file at a time.
-  // Aggregate output modes retain their existing collection semantics.
-  if (ctx.stdio && paths.length === 1 && !options.json && !options.stats) {
-    const errors = new BoundedStringBuilder(
-      Math.min(ctx.limits.maxOutputSize, ctx.limits.maxStringLength),
-      "rg",
+  // Ordinary pipelines consume the same globally ordered discovery lazily.
+  if (ctx.stdio && !options.json && !options.stats) {
+    const { files, singleExplicitFile, errors } = await discoverFiles(
+      ctx,
+      paths,
+      options,
+      gitignore,
+      typeRegistry,
     );
-    const path = paths[0];
-    const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
-    let stat: FsStat;
-    try {
-      stat = await ctx.fs.stat(fullPath);
-    } catch (error) {
-      rethrowFatalExecutionError(error);
-      return {
-        stdout: "",
-        stderr: `rg: ${path}: Unable to access path\n`,
-        exitCode: 2,
-      };
-    }
-    const files = stat.isDirectory
-      ? walkDirectory(
-          ctx,
-          path,
-          fullPath,
-          0,
-          options,
-          gitignore,
-          typeRegistry,
-          errors,
-          new FileTraversalBudget({
-            limits: ctx.limits,
-            signal: ctx.signal,
-            executionScope: ctx.executionScope,
-            site: "rg",
-          }),
-          new Set(),
-        )
-      : stat.isFile &&
-          (options.maxFilesize <= 0 || stat.size <= options.maxFilesize)
-        ? [path]
-        : [];
     return searchFiles(
       ctx,
       files,
       regex,
       options,
-      !options.noFilename && (options.withFilename || !stat.isFile),
+      !options.noFilename && (options.withFilename || !singleExplicitFile),
       options.lineNumber &&
-        (explicitLineNumbers || (!stat.isFile && !options.onlyMatching)),
+        (explicitLineNumbers || (!singleExplicitFile && !options.onlyMatching)),
       errors,
       kResetGroup,
       preFilter,
@@ -559,7 +534,42 @@ async function collectFiles(
   gitignore: GitignoreManager | null,
   typeRegistry: FileTypeRegistry,
 ): Promise<CollectFilesResult> {
+  const discovered = await discoverFiles(
+    ctx,
+    paths,
+    options,
+    gitignore,
+    typeRegistry,
+  );
   const files: string[] = [];
+  for await (const file of discovered.files) {
+    if (files.length >= ctx.limits.maxArrayElements) {
+      throw new ExecutionLimitError(
+        `rg: file collection limit exceeded (${ctx.limits.maxArrayElements})`,
+        "array_elements",
+      );
+    }
+    files.push(file);
+  }
+  return {
+    files,
+    singleExplicitFile: discovered.singleExplicitFile,
+    stderr: discovered.errors.build(),
+  };
+}
+
+async function discoverFiles(
+  ctx: RuntimeCommandContext,
+  paths: string[],
+  options: RgOptions,
+  gitignore: GitignoreManager | null,
+  typeRegistry: FileTypeRegistry,
+): Promise<{
+  files: AsyncGenerator<string>;
+  singleExplicitFile: boolean;
+  errors: BoundedStringBuilder;
+}> {
+  const sources: AsyncGenerator<string>[] = [];
   const errors = new BoundedStringBuilder(
     Math.min(ctx.limits.maxOutputSize, ctx.limits.maxStringLength),
     "rg",
@@ -572,66 +582,79 @@ async function collectFiles(
   });
   let explicitFileCount = 0;
   let directoryCount = 0;
-
   for (const path of paths) {
     traversalBudget.checkpoint();
     const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
-
     try {
       const stat = await ctx.fs.stat(fullPath);
-
       if (stat.isFile) {
         explicitFileCount++;
-        // Check max filesize
-        if (options.maxFilesize > 0 && stat.size > options.maxFilesize) {
-          continue;
-        }
-        // Explicit files bypass recursive ignore/type/glob selection.
-        // https://github.com/BurntSushi/ripgrep/blob/15.2.0/crates/ignore/src/walk.rs#L1095-L1110
-        if (files.length >= ctx.limits.maxArrayElements) {
-          throw new ExecutionLimitError(
-            `rg: file collection limit exceeded (${ctx.limits.maxArrayElements})`,
-            "array_elements",
+        if (options.maxFilesize <= 0 || stat.size <= options.maxFilesize) {
+          sources.push(
+            (async function* () {
+              yield path;
+            })(),
           );
         }
-        files.push(path);
       } else if (stat.isDirectory) {
         directoryCount++;
-        for await (const file of walkDirectory(
-          ctx,
-          path,
-          fullPath,
-          0,
-          options,
-          gitignore,
-          typeRegistry,
-          errors,
-          traversalBudget,
-          new Set(),
-        )) {
-          if (files.length >= ctx.limits.maxArrayElements) {
-            throw new ExecutionLimitError(
-              `rg: file collection limit exceeded (${ctx.limits.maxArrayElements})`,
-              "array_elements",
-            );
-          }
-          files.push(file);
-        }
+        sources.push(
+          walkDirectory(
+            ctx,
+            path,
+            fullPath,
+            0,
+            options,
+            gitignore,
+            typeRegistry,
+            errors,
+            traversalBudget,
+            new Set(),
+          ),
+        );
       }
     } catch (error) {
       rethrowFatalExecutionError(error);
       errors.append(`rg: ${path}: Unable to access path\n`);
     }
   }
-
-  const sortedFiles = options.sort === "path" ? files.sort() : files;
-
   return {
-    files: sortedFiles,
+    files: mergeFileSources(sources, options.sort === "path"),
     singleExplicitFile:
       paths.length === 1 && explicitFileCount === 1 && directoryCount === 0,
-    stderr: errors.build(),
+    errors,
   };
+}
+
+/** Merge sorted roots without collecting their complete directory trees. */
+async function* mergeFileSources(
+  sources: AsyncGenerator<string>[],
+  sorted: boolean,
+): AsyncGenerator<string> {
+  try {
+    if (!sorted) {
+      for (const source of sources) yield* source;
+      return;
+    }
+    const heads = [];
+    for (const source of sources) heads.push(await source.next());
+    while (true) {
+      let selected = -1;
+      for (let i = 0; i < heads.length; i++) {
+        if (
+          !heads[i].done &&
+          (selected < 0 || heads[i].value < heads[selected].value)
+        ) {
+          selected = i;
+        }
+      }
+      if (selected < 0) return;
+      yield heads[selected].value;
+      heads[selected] = await sources[selected].next();
+    }
+  } finally {
+    for (const source of sources) await source.return(undefined);
+  }
 }
 
 /**
@@ -1022,34 +1045,35 @@ async function listFiles(
   // Default to current directory
   const paths = inputPaths.length === 0 ? ["."] : inputPaths;
 
-  // Collect files
-  const { files, stderr } = await collectFiles(
+  const { files, errors } = await discoverFiles(
     ctx,
     paths,
     options,
     gitignore,
     typeRegistry,
   );
-
-  if (files.length === 0) {
-    return { stdout: "", stderr, exitCode: stderr ? 2 : 1 };
-  }
-
-  // In quiet mode, just indicate success without output
-  if (options.quiet) {
-    return { stdout: "", stderr: "", exitCode: 0 };
-  }
-
-  // Output file list
   const sep = options.nullSeparator ? "\0" : "\n";
   const output = new BoundedStringBuilder(
     Math.min(ctx.limits.maxOutputSize, ctx.limits.maxStringLength),
     "rg",
   );
-  for (const file of files) output.append(file).append(sep);
-  const stdout = output.build();
-
-  return { stdout, stderr, exitCode: stderr ? 2 : 0 };
+  let found = false;
+  for await (const file of files) {
+    found = true;
+    if (options.quiet) continue;
+    if (ctx.stdio) {
+      await ctx.stdio.write(encodeUtf8ToBytes(file + sep));
+    } else {
+      output.append(file).append(sep);
+    }
+  }
+  if (options.quiet && found) return { stdout: "", stderr: "", exitCode: 0 };
+  const stderr = errors.build();
+  return {
+    stdout: output.build(),
+    stderr,
+    exitCode: stderr ? 2 : found ? 0 : 1,
+  };
 }
 
 /**
