@@ -307,7 +307,12 @@ export async function executeSearch(
       onlyMatching: options.onlyMatching,
       beforeContext: options.beforeContext,
       afterContext: options.afterContext,
-      maxCount: options.maxCount,
+      maxCount:
+        !options.json &&
+        !options.stats &&
+        (options.quiet || options.filesWithMatches || options.filesWithoutMatch)
+          ? 1
+          : options.maxCount,
       contextSeparator: options.contextSeparator,
       showColumn: options.column,
       vimgrep: options.vimgrep,
@@ -1174,7 +1179,14 @@ async function searchFiles(
             onlyMatching: options.onlyMatching,
             beforeContext: options.beforeContext,
             afterContext: options.afterContext,
-            maxCount: options.maxCount,
+            maxCount:
+              !options.json &&
+              !options.stats &&
+              (options.quiet ||
+                options.filesWithMatches ||
+                options.filesWithoutMatch)
+                ? 1
+                : options.maxCount,
             contextSeparator: options.contextSeparator,
             showColumn: options.column,
             vimgrep: options.vimgrep,
