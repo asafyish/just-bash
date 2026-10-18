@@ -33,6 +33,7 @@ const STAGE_DEPTH = "streaming pipeline stages";
 function isStaticPart(part: WordPart): boolean {
   return (
     part.type === "Literal" ||
+    part.type === "Glob" ||
     part.type === "SingleQuoted" ||
     part.type === "Escaped" ||
     (part.type === "DoubleQuoted" && part.parts.every(isStaticPart))
