@@ -21,12 +21,14 @@ import type {
   WhileNode,
 } from "../ast/types.js";
 import { utf8ByteLength } from "../encoding.js";
+import { BrokenPipeError } from "../streams/byte-pipe.js";
 import type { ExecResult } from "../types.js";
 import { evaluateArithmetic } from "./arithmetic.js";
 import { matchPattern } from "./conditionals.js";
 import {
   BreakError,
   ContinueError,
+  ControlFlowError,
   ErrexitError,
   ExecutionLimitError,
   ExitError,
@@ -205,15 +207,17 @@ async function executeIfBody(
 export async function executeFor(
   ctx: InterpreterContext,
   node: ForNode,
+  emit?: (result: ExecResult) => Promise<void>,
 ): Promise<ExecResult> {
   return withPreparedRedirections(ctx, node.redirections, "", () =>
-    executeForBody(ctx, node),
+    executeForBody(ctx, node, emit),
   );
 }
 
 async function executeForBody(
   ctx: InterpreterContext,
   node: ForNode,
+  emit?: (result: ExecResult) => Promise<void>,
 ): Promise<ExecResult> {
   const output = new CompoundOutput(ctx);
   let exitCode = 0;
@@ -267,10 +271,12 @@ async function executeForBody(
       try {
         for (const stmt of node.body) {
           const stmtResult = await ctx.executeStatement(stmt);
-          output.append(stmtResult.stdout, stmtResult.stderr);
+          if (emit) await emit(stmtResult);
+          output.append(emit ? "" : stmtResult.stdout, stmtResult.stderr);
           exitCode = stmtResult.exitCode;
         }
       } catch (error) {
+        if (error instanceof BrokenPipeError) throw error;
         const loopResult = handleLoopError(
           error,
           output.stdout,
@@ -284,6 +290,12 @@ async function executeForBody(
         // iteration would still see the failure (see adoptLoopStatus).
         if (loopResult.exitCode !== undefined) {
           exitCode = adoptLoopStatus(ctx, loopResult.exitCode);
+        }
+        if (emit) {
+          await emit(output.build(loopResult.exitCode ?? 0));
+          output.replace("", output.stderr);
+          if (loopResult.error instanceof ControlFlowError)
+            loopResult.error.stdout = "";
         }
         if (loopResult.action === "break") break;
         if (loopResult.action === "continue") continue;

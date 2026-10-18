@@ -1,5 +1,6 @@
 import { combineAbortSignals } from "../abort-signals.js";
 import type {
+  ForNode,
   PipelineNode,
   SimpleCommandNode,
   WordPart,
@@ -49,11 +50,11 @@ export async function executeStreamingPipeline(
   ctx: InterpreterContext,
   node: PipelineNode,
   execute: (
-    node: SimpleCommandNode,
+    node: SimpleCommandNode | ForNode,
     state: InterpreterState,
     stdin: string,
     stdio: CommandStdio | undefined,
-    resolved: Extract<ResolveCommandResult, { cmd: unknown }>,
+    resolved: Extract<ResolveCommandResult, { cmd: unknown }> | undefined,
   ) => Promise<ExecResult>,
 ): Promise<StreamingPipelineResult | undefined> {
   if (
@@ -70,8 +71,20 @@ export async function executeStreamingPipeline(
   )
     return;
 
-  const candidates: Array<{ node: SimpleCommandNode; name: string }> = [];
+  const candidates: Array<{ node: SimpleCommandNode | ForNode; name: string }> =
+    [];
   for (const command of node.commands) {
+    if (
+      command.type === "For" &&
+      candidates.length === 0 &&
+      !command.redirections.length &&
+      command.words?.every((word) =>
+        word.parts.every((part) => isStaticPart(part) || part.type === "Glob"),
+      )
+    ) {
+      candidates.push({ node: command, name: "" });
+      continue;
+    }
     if (
       command.type !== "SimpleCommand" ||
       command.redirections.some(
@@ -106,12 +119,21 @@ export async function executeStreamingPipeline(
     return;
 
   const stages: Array<{
-    node: SimpleCommandNode;
+    node: SimpleCommandNode | ForNode;
     streaming: boolean;
     extension: boolean;
-    resolved: Extract<ResolveCommandResult, { cmd: unknown }>;
+    resolved: Extract<ResolveCommandResult, { cmd: unknown }> | undefined;
   }> = [];
   for (const candidate of candidates) {
+    if (candidate.node.type === "For") {
+      stages.push({
+        node: candidate.node,
+        streaming: true,
+        extension: false,
+        resolved: undefined,
+      });
+      continue;
+    }
     const resolved = await resolveCommand(ctx, candidate.name);
     if (!resolved || !("cmd" in resolved)) return;
     stages.push({
