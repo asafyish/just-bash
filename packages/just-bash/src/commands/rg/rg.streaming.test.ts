@@ -13,6 +13,9 @@ describe("rg streaming pipelines", () => {
   it("stops discovery and reading after head closes its pipe", async () => {
     const fs = new InMemoryFs({
       ...files,
+      ...Object.fromEntries(
+        Array.from({ length: 100 }, (_, i) => [`/src/b${i}`, "other\n"]),
+      ),
       "/src/a": "hello שלום\n".repeat(10000),
     });
     const read = fs.readFileBuffer.bind(fs);
@@ -35,6 +38,37 @@ describe("rg streaming pipelines", () => {
     });
     expect(readPaths).not.toContain("/src/sub/b");
     expect(directories).not.toContain("/src/sub");
+  });
+
+  it("reads ahead concurrently without searching files after the consumer closes", async () => {
+    const input: Record<string, string> = Object.create(null);
+    for (let i = 0; i < 120; i++)
+      input[`/src/f${String(i).padStart(3, "0")}`] =
+        i === 0 ? "needle\n" : "other\n".repeat(500);
+    const fs = new InMemoryFs(input);
+    const read = fs.readFileBuffer.bind(fs);
+    let pending = 0;
+    let peak = 0;
+    let reads = 0;
+    fs.readFileBuffer = async (path) => {
+      if (!path.startsWith("/src/")) return read(path);
+      pending++;
+      reads++;
+      peak = Math.max(peak, pending);
+      await Promise.resolve();
+      pending--;
+      return read(path);
+    };
+    const result = await new Bash({ fs }).exec("rg -l needle /src | head -1");
+    expect(result).toMatchObject({
+      stdout: "/src/f000\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(50);
+    expect(reads).toBeLessThan(120);
+    expect(pending).toBe(0);
   });
 
   it.each([
