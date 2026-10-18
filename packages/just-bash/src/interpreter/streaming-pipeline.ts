@@ -73,7 +73,14 @@ export async function executeStreamingPipeline(
   for (const command of node.commands) {
     if (
       command.type !== "SimpleCommand" ||
-      command.redirections.length ||
+      command.redirections.some(
+        (redirect) =>
+          redirect.fd !== 2 ||
+          redirect.fdVariable !== undefined ||
+          ![">", ">>", ">|"].includes(redirect.operator) ||
+          redirect.target.type !== "Word" ||
+          !redirect.target.parts.every(isStaticPart),
+      ) ||
       command.assignments.length ||
       command.name?.parts.length !== 1 ||
       command.name.parts[0].type !== "Literal" ||
