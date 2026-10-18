@@ -391,6 +391,7 @@ const commandLoaders: LazyCommandDef<CommandName>[] = [
   // Data processing
   {
     name: "jq",
+    streaming: true,
     load: async () => (await import("./jq/jq.js")).jqCommand,
   },
   {

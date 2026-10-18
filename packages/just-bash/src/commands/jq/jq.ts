@@ -4,7 +4,11 @@
  * Full jq implementation with proper parser and evaluator.
  */
 
-import { decodeBytesToUtf8 } from "../../encoding.js";
+import {
+  decodeBytesToUtf8,
+  encodeUtf8ToBytes,
+  unsafeBytesFromLatin1,
+} from "../../encoding.js";
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import {
@@ -12,6 +16,8 @@ import {
   awaitWithDefenseContext,
 } from "../../security/defense-context.js";
 import { SecurityViolationError } from "../../security/defense-in-depth-box.js";
+import { BrokenPipeError } from "../../streams/byte-pipe.js";
+import { readCommandStdin } from "../../streams/command-stdio.js";
 import type {
   ExecResult,
   RuntimeCommand,
@@ -45,6 +51,8 @@ function usesInputs(node: unknown): boolean {
     return true;
   return Object.values(node).some(usesInputs);
 }
+
+class JqInputError extends Error {}
 
 function escapeControlChar(char: string): string {
   switch (char) {
@@ -238,6 +246,7 @@ function jqArgError(message: string): ExecResult {
 
 const jqHelp = {
   name: "jq",
+  streaming: true,
   summary: "command-line JSON processor",
   usage: "jq [OPTIONS] FILTER [FILE...]",
   options: [
@@ -453,39 +462,41 @@ export const jqCommand: RuntimeCommand = {
       }
     }
 
+    async function* readInputs(
+      readNull = false,
+    ): AsyncGenerator<{ content: string }> {
+      if (nullInput && !readNull) return;
+      const stdin =
+        files.length === 0 || files.includes("-")
+          ? await readCommandStdin(ctx)
+          : undefined;
+      const paths = files.length ? files : ["-"];
+      for (let index = 0; index < paths.length; index += 50) {
+        if (ctx.stdio) await ctx.stdio.write(unsafeBytesFromLatin1(""));
+        const batch = paths.slice(index, index + 50);
+        const regular = batch.filter((path) => path !== "-");
+        const result = regular.length
+          ? await withDefenseContext("file read", () =>
+              readFiles(ctx, regular, { cmdName: "jq", stopOnError: true }),
+            )
+          : { files: [], stderr: "", exitCode: 0 };
+        if (result.exitCode !== 0) throw new JqInputError(result.stderr);
+        let fileIndex = 0;
+        for (const path of batch) {
+          const content =
+            path === "-" ? stdin : result.files[fileIndex++].content;
+          if (content !== undefined)
+            yield { content: decodeBytesToUtf8(content) };
+        }
+      }
+    }
+
     try {
       const ast = parse(filter, {
         maxDepth: ctx.limits.maxQueryDepth,
         maxTokens: ctx.limits.maxQueryTokens,
         maxSourceLength: ctx.limits.maxStringLength,
       });
-      // Build list of inputs: stdin or files. jq parses JSON, so the input
-      // bytes are decoded to UTF-8 before parsing — without this, multi-byte
-      // sequences inside string values get re-encoded twice and emit mojibake.
-      let inputs: { source: string; content: string }[] = [];
-      if (nullInput && !usesInputs(ast)) {
-        // No input-consuming call can execute, so -n needs no file reads.
-      } else if (
-        files.length === 0 ||
-        (files.length === 1 && files[0] === "-")
-      ) {
-        inputs.push({ source: "stdin", content: decodeBytesToUtf8(ctx.stdin) });
-      } else {
-        // Read all files in parallel using shared utility
-        const result = await withDefenseContext("file read", () =>
-          readFiles(ctx, files, {
-            cmdName: "jq",
-            stopOnError: true,
-          }),
-        );
-        if (result.exitCode !== 0)
-          return { stdout: "", stderr: result.stderr, exitCode: 2 };
-        inputs = result.files.map((f) => ({
-          source: f.filename || "stdin",
-          content: decodeBytesToUtf8(f.content),
-        }));
-      }
-
       let values: QueryValue[] = [];
 
       const evalOptions: EvaluateOptions = {
@@ -515,103 +526,171 @@ export const jqCommand: RuntimeCommand = {
         for (const value of next) target.push(value);
       };
 
-      // The main filter and inputs consume the same stream. With -n, parsing
-      // starts only if the filter requests input.
-      function* readInputValues(): Generator<QueryValue> {
-        if (rawInput && slurp) {
-          yield inputs.map(({ content }) => content).join("");
-        } else if (rawInput) {
-          // Preserve raw lines that span file boundaries.
-          let remainder = "";
-          for (const { content } of inputs) {
-            const text = remainder + content;
-            let start = 0;
-            let nl = text.indexOf("\n", start);
-            while (nl !== -1) {
-              yield text.slice(start, nl);
-              start = nl + 1;
-              nl = text.indexOf("\n", start);
-            }
-            remainder = text.slice(start);
-          }
-          if (remainder !== "") yield remainder;
-        } else {
-          const items: QueryValue[] = [];
-          for (const { content } of inputs) {
-            const trimmed = content.trim();
-            if (!trimmed) continue;
-            const parsed = parseJsonStream(trimmed, jsonLimits);
-            if (slurp) appendValues(items, parsed);
-            else yield* parsed;
-          }
-          if (slurp) yield items;
-        }
-      }
-      const inputValues = readInputValues();
-      evalOptions.inputValues = inputValues;
-      if (nullInput) {
-        values = evaluate(null, ast, evalOptions);
-      } else {
-        for (const value of inputValues) {
-          appendValues(values, evaluate(value, ast, evalOptions));
-        }
-      }
-
-      const separator = joinOutput ? "" : "\n";
-      const maxStringLength = Math.min(
-        ctx.limits.maxStringLength,
-        ctx.limits.maxOutputSize,
-      );
       const formatted: string[] = [];
       let outputBytes = 0;
-      for (const value of values) {
-        const separatorBytes = formatted.length > 0 ? separator.length : 0;
-        const finalNewlineBytes = joinOutput ? 0 : 1;
-        const remainingBytes =
-          maxStringLength - outputBytes - separatorBytes - finalNewlineBytes;
-        if (remainingBytes < 0) {
-          throw new ExecutionLimitError(
-            `output size limit exceeded (${maxStringLength} bytes)`,
-            "string_length",
-          );
-        }
-        if (
-          getValueDepth(value, ctx.limits.maxQueryDepth + 1) >
-          ctx.limits.maxQueryDepth
-        ) {
-          throw new ExecutionLimitError(
-            `query depth limit exceeded (${ctx.limits.maxQueryDepth})`,
-            "recursion",
-          );
-        }
-        const text = formatJsonValue(value, remainingBytes, {
-          compact,
-          raw: raw || joinOutput,
-          sortKeys,
-          useTab,
-          limitKind: "string_length",
-        });
-        const textBytes = utf8ByteLength(text);
-        if (
-          outputBytes + separatorBytes + textBytes + finalNewlineBytes >
-          maxStringLength
-        ) {
-          throw new ExecutionLimitError(
-            `output size limit exceeded (${maxStringLength} bytes)`,
-            "string_length",
-          );
-        }
-        outputBytes += separatorBytes + textBytes;
-        formatted.push(text);
-      }
-      const output = formatted.join(separator);
+      let valueCount = 0;
+      let anyTruthy = false;
+      const emitValues = async (next: QueryValue[]): Promise<void> => {
+        const separator = joinOutput ? "" : "\n";
+        const maxStringLength = Math.min(
+          ctx.limits.maxStringLength,
+          ctx.limits.maxOutputSize,
+        );
 
-      const exitCode =
-        exitStatus &&
-        (values.length === 0 ||
-          values.every((v) => v === null || v === undefined || v === false))
-          ? 1
-          : 0;
+        for (const value of next) {
+          valueCount++;
+          anyTruthy ||=
+            value !== null && value !== undefined && value !== false;
+          if (valueCount > ctx.limits.maxQueryElements)
+            throw new ExecutionLimitError(
+              "query result element limit exceeded",
+              "array_elements",
+            );
+          const separatorBytes = formatted.length > 0 ? separator.length : 0;
+          const finalNewlineBytes = joinOutput ? 0 : 1;
+          const remainingBytes =
+            maxStringLength - outputBytes - separatorBytes - finalNewlineBytes;
+          if (remainingBytes < 0) {
+            throw new ExecutionLimitError(
+              `output size limit exceeded (${maxStringLength} bytes)`,
+              "string_length",
+            );
+          }
+          if (
+            getValueDepth(value, ctx.limits.maxQueryDepth + 1) >
+            ctx.limits.maxQueryDepth
+          ) {
+            throw new ExecutionLimitError(
+              `query depth limit exceeded (${ctx.limits.maxQueryDepth})`,
+              "recursion",
+            );
+          }
+          const text = formatJsonValue(value, remainingBytes, {
+            compact,
+            raw: raw || joinOutput,
+            sortKeys,
+            useTab,
+            limitKind: "string_length",
+          });
+          const textBytes = utf8ByteLength(text);
+          if (
+            outputBytes + separatorBytes + textBytes + finalNewlineBytes >
+            maxStringLength
+          ) {
+            throw new ExecutionLimitError(
+              `output size limit exceeded (${maxStringLength} bytes)`,
+              "string_length",
+            );
+          }
+          outputBytes += separatorBytes + textBytes;
+          if (ctx.stdio) {
+            await ctx.stdio.write(
+              encodeUtf8ToBytes(joinOutput ? text : `${text}\n`),
+            );
+            outputBytes = 0;
+          } else formatted.push(text);
+        }
+      };
+      const inputStream = readInputs(usesInputs(ast));
+      if (usesInputs(ast)) {
+        const inputs: { content: string }[] = [];
+        for await (const input of inputStream) inputs.push(input);
+        function* readInputValues(): Generator<QueryValue> {
+          if (rawInput && slurp) {
+            yield inputs.map(({ content }) => content).join("");
+          } else if (rawInput) {
+            // Preserve raw lines that span file boundaries.
+            let remainder = "";
+            for (const { content } of inputs) {
+              const text = remainder + content;
+              let start = 0;
+              let nl = text.indexOf("\n", start);
+              while (nl !== -1) {
+                yield text.slice(start, nl);
+                start = nl + 1;
+                nl = text.indexOf("\n", start);
+              }
+              remainder = text.slice(start);
+            }
+            if (remainder !== "") yield remainder;
+          } else {
+            const items: QueryValue[] = [];
+            for (const { content } of inputs) {
+              const trimmed = content.trim();
+              if (!trimmed) continue;
+              const parsed = parseJsonStream(trimmed, jsonLimits);
+              if (slurp) appendValues(items, parsed);
+              else yield* parsed;
+            }
+            if (slurp) yield items;
+          }
+        }
+
+        const inputValues = readInputValues();
+        evalOptions.inputValues = inputValues;
+        if (nullInput) await emitValues(evaluate(null, ast, evalOptions));
+        else
+          for (const value of inputValues)
+            await emitValues(evaluate(value, ast, evalOptions));
+      } else if (nullInput) {
+        values = evaluate(null, ast, evalOptions);
+      } else if (rawInput && slurp) {
+        // Raw slurp: the entire concatenated input becomes one JSON string.
+        let rawText = "";
+        for await (const { content } of inputStream) rawText += content;
+        values = evaluate(rawText, ast, evalOptions);
+      } else if (rawInput) {
+        // Raw input: real jq concatenates all inputs into a single stream and
+        // splits on newlines, so a line can span a file boundary when a file
+        // lacks a trailing newline. Scan incrementally, carrying only the
+        // unterminated trailing fragment across inputs, instead of building the
+        // full concatenated string and a complete array of lines. A trailing
+        // newline does not yield a final empty string, but interior blank
+        // lines are preserved.
+        let remainder = "";
+        for await (const { content } of inputStream) {
+          const text = remainder + content;
+          let start = 0;
+          let nl = text.indexOf("\n", start);
+          while (nl !== -1) {
+            await emitValues(evaluate(text.slice(start, nl), ast, evalOptions));
+            start = nl + 1;
+            nl = text.indexOf("\n", start);
+          }
+          remainder = text.slice(start);
+        }
+        if (remainder !== "") {
+          await emitValues(evaluate(remainder, ast, evalOptions));
+        }
+      } else if (slurp) {
+        // Slurp mode: combine all inputs into single array
+        // Use JSON stream parser to handle concatenated JSON (not just NDJSON)
+        const items: QueryValue[] = [];
+        for await (const { content } of inputStream) {
+          const trimmed = content.trim();
+          if (trimmed) {
+            appendValues(items, parseJsonStream(trimmed, jsonLimits));
+          }
+        }
+        values = evaluate(items, ast, evalOptions);
+      } else {
+        // Process each input file separately
+        // Use JSON stream parser to handle concatenated JSON (e.g., cat file1.json file2.json | jq .)
+        for await (const { content } of inputStream) {
+          const trimmed = content.trim();
+          if (!trimmed) continue;
+
+          const jsonValues = parseJsonStream(trimmed, jsonLimits);
+          for (const jsonValue of jsonValues) {
+            await emitValues(evaluate(jsonValue, ast, evalOptions));
+          }
+        }
+      }
+
+      await emitValues(values);
+      const output = formatted.join(joinOutput ? "" : "\n");
+
+      const exitCode = exitStatus && (valueCount === 0 || !anyTruthy) ? 1 : 0;
 
       // jq emits text; the pipeline handles encoding.
       const stdoutText = output ? (joinOutput ? output : `${output}\n`) : "";
@@ -621,6 +700,9 @@ export const jqCommand: RuntimeCommand = {
         exitCode,
       };
     } catch (e) {
+      if (e instanceof BrokenPipeError) throw e;
+      if (e instanceof JqInputError)
+        return { stdout: "", stderr: e.message, exitCode: 2 };
       if (e instanceof SecurityViolationError) {
         throw e;
       }
