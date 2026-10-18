@@ -9,8 +9,9 @@ describe("jq per-input pipeline output", () => {
         Array.from({ length: 1000 }, (_, i) => [`/f${i}.json`, `{"id":${i}}`]),
       ),
     );
-    const reads = vi.spyOn(fs, "readFileBuffer");
     const bash = new Bash({ fs });
+    await bash.exec("head -n 1 /f0.json");
+    const reads = vi.spyOn(fs, "readFileBuffer");
     const result = await bash.exec(
       `jq -r .id ${Array.from({ length: 1000 }, (_, i) => `/f${i}.json`).join(" ")} | head -n 1`,
     );

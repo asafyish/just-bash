@@ -280,6 +280,7 @@ export const jqCommand: RuntimeCommand = {
     ctx: RuntimeCommandContext,
   ): Promise<ExecResult> {
     assertDefenseContext(ctx.requireDefenseContext, "jq", "execution entry");
+    const stdio = ctx.stdio;
     const withDefenseContext = <T>(
       phase: string,
       op: () => Promise<T>,
@@ -468,11 +469,14 @@ export const jqCommand: RuntimeCommand = {
       if (nullInput && !readNull) return;
       const stdin =
         files.length === 0 || files.includes("-")
-          ? await readCommandStdin(ctx)
+          ? await withDefenseContext("stdin read", () => readCommandStdin(ctx))
           : undefined;
       const paths = files.length ? files : ["-"];
       for (let index = 0; index < paths.length; index += 50) {
-        if (ctx.stdio) await ctx.stdio.write(unsafeBytesFromLatin1(""));
+        if (stdio)
+          await withDefenseContext("pipeline probe", () =>
+            stdio.write(unsafeBytesFromLatin1("")),
+          );
         const batch = paths.slice(index, index + 50);
         const regular = batch.filter((path) => path !== "-");
         const result = regular.length
@@ -583,18 +587,35 @@ export const jqCommand: RuntimeCommand = {
             );
           }
           outputBytes += separatorBytes + textBytes;
-          if (ctx.stdio) {
-            await ctx.stdio.write(
-              encodeUtf8ToBytes(joinOutput ? text : `${text}\n`),
+          if (stdio) {
+            await withDefenseContext("pipeline output", () =>
+              stdio.write(encodeUtf8ToBytes(joinOutput ? text : `${text}\n`)),
             );
             outputBytes = 0;
           } else formatted.push(text);
         }
       };
       const inputStream = readInputs(usesInputs(ast));
+      const consumeInputs = async (
+        visit: (content: string) => Promise<void>,
+      ): Promise<void> => {
+        for (;;) {
+          const input = await withDefenseContext("input iteration", () =>
+            inputStream.next(),
+          );
+          if (input.done) return;
+          await withDefenseContext("input evaluation", () =>
+            visit(input.value.content),
+          );
+        }
+      };
       if (usesInputs(ast)) {
         const inputs: { content: string }[] = [];
-        for await (const input of inputStream) inputs.push(input);
+        await withDefenseContext("input collection", () =>
+          consumeInputs(async (content) => {
+            inputs.push({ content });
+          }),
+        );
         function* readInputValues(): Generator<QueryValue> {
           if (rawInput && slurp) {
             yield inputs.map(({ content }) => content).join("");
@@ -628,16 +649,25 @@ export const jqCommand: RuntimeCommand = {
 
         const inputValues = readInputValues();
         evalOptions.inputValues = inputValues;
-        if (nullInput) await emitValues(evaluate(null, ast, evalOptions));
+        if (nullInput)
+          await withDefenseContext("result output", () =>
+            emitValues(evaluate(null, ast, evalOptions)),
+          );
         else
           for (const value of inputValues)
-            await emitValues(evaluate(value, ast, evalOptions));
+            await withDefenseContext("result output", () =>
+              emitValues(evaluate(value, ast, evalOptions)),
+            );
       } else if (nullInput) {
         values = evaluate(null, ast, evalOptions);
       } else if (rawInput && slurp) {
         // Raw slurp: the entire concatenated input becomes one JSON string.
         let rawText = "";
-        for await (const { content } of inputStream) rawText += content;
+        await withDefenseContext("raw slurp", () =>
+          consumeInputs(async (content) => {
+            rawText += content;
+          }),
+        );
         values = evaluate(rawText, ast, evalOptions);
       } else if (rawInput) {
         // Raw input: real jq concatenates all inputs into a single stream and
@@ -648,46 +678,58 @@ export const jqCommand: RuntimeCommand = {
         // newline does not yield a final empty string, but interior blank
         // lines are preserved.
         let remainder = "";
-        for await (const { content } of inputStream) {
-          const text = remainder + content;
-          let start = 0;
-          let nl = text.indexOf("\n", start);
-          while (nl !== -1) {
-            await emitValues(evaluate(text.slice(start, nl), ast, evalOptions));
-            start = nl + 1;
-            nl = text.indexOf("\n", start);
-          }
-          remainder = text.slice(start);
-        }
+        await withDefenseContext("input processing", () =>
+          consumeInputs(async (content) => {
+            const text = remainder + content;
+            let start = 0;
+            let nl = text.indexOf("\n", start);
+            while (nl !== -1) {
+              await withDefenseContext("result output", () =>
+                emitValues(evaluate(text.slice(start, nl), ast, evalOptions)),
+              );
+              start = nl + 1;
+              nl = text.indexOf("\n", start);
+            }
+            remainder = text.slice(start);
+          }),
+        );
         if (remainder !== "") {
-          await emitValues(evaluate(remainder, ast, evalOptions));
+          await withDefenseContext("result output", () =>
+            emitValues(evaluate(remainder, ast, evalOptions)),
+          );
         }
       } else if (slurp) {
         // Slurp mode: combine all inputs into single array
         // Use JSON stream parser to handle concatenated JSON (not just NDJSON)
         const items: QueryValue[] = [];
-        for await (const { content } of inputStream) {
-          const trimmed = content.trim();
-          if (trimmed) {
-            appendValues(items, parseJsonStream(trimmed, jsonLimits));
-          }
-        }
+        await withDefenseContext("input processing", () =>
+          consumeInputs(async (content) => {
+            const trimmed = content.trim();
+            if (trimmed) {
+              appendValues(items, parseJsonStream(trimmed, jsonLimits));
+            }
+          }),
+        );
         values = evaluate(items, ast, evalOptions);
       } else {
         // Process each input file separately
         // Use JSON stream parser to handle concatenated JSON (e.g., cat file1.json file2.json | jq .)
-        for await (const { content } of inputStream) {
-          const trimmed = content.trim();
-          if (!trimmed) continue;
+        await withDefenseContext("input processing", () =>
+          consumeInputs(async (content) => {
+            const trimmed = content.trim();
+            if (!trimmed) return;
 
-          const jsonValues = parseJsonStream(trimmed, jsonLimits);
-          for (const jsonValue of jsonValues) {
-            await emitValues(evaluate(jsonValue, ast, evalOptions));
-          }
-        }
+            const jsonValues = parseJsonStream(trimmed, jsonLimits);
+            for (const jsonValue of jsonValues) {
+              await withDefenseContext("result output", () =>
+                emitValues(evaluate(jsonValue, ast, evalOptions)),
+              );
+            }
+          }),
+        );
       }
 
-      await emitValues(values);
+      await withDefenseContext("result output", () => emitValues(values));
       const output = formatted.join(joinOutput ? "" : "\n");
 
       const exitCode = exitStatus && (valueCount === 0 || !anyTruthy) ? 1 : 0;
