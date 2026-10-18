@@ -1,8 +1,14 @@
-import { decodeBytesToUtf8 } from "../../encoding.js";
+import {
+  decodeBytesToUtf8,
+  EMPTY_BYTES,
+  encodeUtf8ToBytes,
+} from "../../encoding.js";
 import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
 import { readBatch } from "../../fs/read-many.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
 import type { UserRegex } from "../../regex/index.js";
+import { BrokenPipeError } from "../../streams/byte-pipe.js";
+import { readCommandStdin } from "../../streams/command-stdio.js";
 import type {
   ExecResult,
   RuntimeCommand,
@@ -204,6 +210,7 @@ const grepHelp = {
 
 export const grepCommand: RuntimeCommand = {
   name: "grep",
+  streaming: true,
 
   async execute(
     args: string[],
@@ -416,6 +423,12 @@ export const grepCommand: RuntimeCommand = {
     // A pattern operand can hold several newline-separated patterns, so expand
     // every collected operand once before the -f files are appended.
     patterns = patterns.flatMap(splitPatternOperand);
+    const stdin =
+      (!recursive && operands.length === 0) ||
+      operands.includes("-") ||
+      patternFiles.includes("-")
+        ? await readCommandStdin(ctx)
+        : EMPTY_BYTES;
 
     // Collect patterns: -e/positional first, then each -f file in order.
     // All of them OR-combine, exactly like GNU grep.
@@ -435,7 +448,7 @@ export const grepCommand: RuntimeCommand = {
       if (patternFile === "-") {
         // stdin is a stream: the first `-f -` drains it, any later one reads
         // EOF and contributes nothing.
-        content = stdinUsedForPatterns ? "" : decodeBytesToUtf8(ctx.stdin);
+        content = stdinUsedForPatterns ? "" : decodeBytesToUtf8(stdin);
         stdinUsedForPatterns = true;
       } else {
         try {
@@ -546,8 +559,8 @@ export const grepCommand: RuntimeCommand = {
     // If no files and stdin is provided (including empty string), read from
     // stdin. grep runs regex over text — decode bytes to UTF-8 so multibyte
     // codepoints match `.` / character classes correctly.
-    if (files.length === 0 && ctx.stdin !== undefined) {
-      let input = stdinUsedForPatterns ? "" : decodeBytesToUtf8(ctx.stdin);
+    if (files.length === 0 && stdin !== undefined) {
+      let input = stdinUsedForPatterns ? "" : decodeBytesToUtf8(stdin);
       const binary = input.includes("\0");
       if (binary && binaryMode === "without-match") input = "";
       const result = searchContent(input, regex, {
@@ -597,124 +610,97 @@ export const grepCommand: RuntimeCommand = {
     let anyMatch = false;
     let anyError = false;
 
-    // Collect all files to search (expand globs first)
-    // FileEntry includes type info when available to skip stat calls
-    const filesToSearch: FileEntry[] = [];
     const traversalBudget: GrepTraversalBudget = {
       operations: 0,
       results: 0,
       maxOperations: ctx.limits.maxGlobOperations,
       maxResults: ctx.limits.maxArrayElements,
     };
-    const appendFiles = (entries: FileEntry[]): void => {
-      if (entries.length > traversalBudget.maxResults - filesToSearch.length) {
-        throw new ExecutionLimitError(
-          `grep: array element limit exceeded (${traversalBudget.maxResults})`,
-          "array_elements",
-        );
-      }
-      filesToSearch.push(...entries);
-    };
-    /**
-     * True once a `-` operand has claimed stdin. stdin is a stream, so only the
-     * first reader sees its contents.
-     */
-    let stdinConsumed = false;
-    /**
-     * True once a real path is queued. GNU only forces the file-name prefix
-     * under -r when recursion can actually descend into a directory, and `-` is
-     * never a directory: `grep -r pat -` prints bare lines.
-     */
-    let hasFileTarget = false;
-    for (const file of files) {
-      if (file === "-") {
-        // GNU treats `-` as an operand naming standard input. It bypasses glob
-        // expansion, recursion and --include/--exclude entirely: those all
-        // filter on a file name, and stdin has none.
-        if (filesToSearch.length >= traversalBudget.maxResults) {
-          throw new ExecutionLimitError(
-            `grep: array element limit exceeded (${traversalBudget.maxResults})`,
-            "array_elements",
+    // Keep operand and traversal order, discovering the next file only when
+    // its output can be consumed. Two entries determine filename prefixes.
+    async function* entries(): AsyncGenerator<FileEntry> {
+      let stdinConsumed = false;
+      for (const file of files) {
+        if (file === "-") {
+          yield {
+            path: STDIN_FILENAME,
+            isFile: true,
+            isStdin: true,
+            stdinAtEof: stdinConsumed,
+          };
+          stdinConsumed = true;
+        } else if (
+          file.includes("*") ||
+          file.includes("?") ||
+          file.includes("[")
+        ) {
+          const expanded = await expandGlobPatternWithTypes(
+            file,
+            ctx,
+            traversalBudget,
           );
-        }
-        filesToSearch.push({
-          path: STDIN_FILENAME,
-          isFile: true,
-          isStdin: true,
-          stdinAtEof: stdinConsumed,
-        });
-        stdinConsumed = true;
-        continue;
-      }
-      hasFileTarget = true;
-      // Check if this is a glob pattern
-      if (file.includes("*") || file.includes("?") || file.includes("[")) {
-        const expanded = await expandGlobPatternWithTypes(
-          file,
-          ctx,
-          traversalBudget,
-        );
-        if (recursive) {
-          for (const f of expanded) {
-            const recursiveExpanded = await expandRecursiveWithTypes(
-              f.path,
-              ctx,
-              includePatterns,
-              excludePatterns,
-              excludeDirPatterns,
-              f.isFile,
-              traversalBudget,
-              followSymlinks,
-            );
-            appendFiles(recursiveExpanded);
+          for (const entry of expanded) {
+            if (recursive) {
+              yield* expandRecursiveWithTypes(
+                entry.path,
+                ctx,
+                includePatterns,
+                excludePatterns,
+                excludeDirPatterns,
+                entry.isFile,
+                traversalBudget,
+                followSymlinks,
+              );
+            } else {
+              yield entry;
+            }
           }
-        } else {
-          appendFiles(expanded);
-        }
-      } else if (recursive) {
-        const expanded = await expandRecursiveWithTypes(
-          file,
-          ctx,
-          includePatterns,
-          excludePatterns,
-          excludeDirPatterns,
-          undefined,
-          traversalBudget,
-          followSymlinks,
-        );
-        appendFiles(expanded);
-      } else {
-        if (filesToSearch.length >= traversalBudget.maxResults) {
-          throw new ExecutionLimitError(
-            `grep: array element limit exceeded (${traversalBudget.maxResults})`,
-            "array_elements",
+        } else if (recursive) {
+          yield* expandRecursiveWithTypes(
+            file,
+            ctx,
+            includePatterns,
+            excludePatterns,
+            excludeDirPatterns,
+            undefined,
+            traversalBudget,
+            followSymlinks,
           );
+        } else {
+          yield { path: file };
         }
-        filesToSearch.push({ path: file });
       }
     }
-
-    // Determine if we should show filename (after glob expansion)
+    const iterator = entries();
+    const first: FileEntry[] = [];
+    for (let i = 0; i < 2; i++) {
+      const entry = await iterator.next();
+      if (entry.done) break;
+      first.push(entry.value);
+    }
     const showFilename =
       (withFilename ||
-        filesToSearch.length > 1 ||
-        (recursive && hasFileTarget)) &&
+        first.length > 1 ||
+        (recursive && files.some((file) => file !== "-"))) &&
       !noFilename;
 
-    // Process files in parallel batches for better performance
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < filesToSearch.length; i += BATCH_SIZE) {
-      const batch = filesToSearch.slice(i, i + BATCH_SIZE);
-
+    // Buffered execution retains its parallel reads. Streaming searches only
+    // the next file so a closed consumer stops both reads and traversal.
+    for await (const batch of fileBatches(
+      iterator,
+      first,
+      ctx.stdio ? 1 : 50,
+      traversalBudget.maxResults,
+    )) {
       const inputs = await Promise.allSettled(
         batch.map(async (entry): Promise<FileInput> => {
           if (entry.error) return { error: entry.error };
           if (entry.isStdin) {
             return {
               content:
-                entry.stdinAtEof || ctx.stdin === undefined
+                entry.stdinAtEof || stdin === undefined
                   ? ""
-                  : decodeBytesToUtf8(ctx.stdin),
+                  : decodeBytesToUtf8(stdin),
             };
           }
           const basename = entry.path.split("/").pop() || entry.path;
@@ -872,6 +858,15 @@ export const grepCommand: RuntimeCommand = {
             stdout += result.output;
           }
         }
+        if (ctx.stdio && stdout) {
+          try {
+            await ctx.stdio.write(encodeUtf8ToBytes(stdout));
+          } catch (error) {
+            if (!(error instanceof BrokenPipeError)) throw error;
+            return { stdout: "", stderr, exitCode: 141 };
+          }
+          stdout = "";
+        }
       }
     }
 
@@ -902,6 +897,37 @@ export const grepCommand: RuntimeCommand = {
     };
   },
 };
+
+async function* fileBatches(
+  iterator: AsyncGenerator<FileEntry>,
+  first: FileEntry[],
+  size: number,
+  limit: number,
+): AsyncGenerator<FileEntry[]> {
+  let batch = first;
+  let count = 0;
+  try {
+    for (;;) {
+      while (batch.length < size) {
+        const next = await iterator.next();
+        if (next.done) break;
+        batch.push(next.value);
+      }
+      if (batch.length === 0) return;
+      count += batch.length;
+      if (count > limit) {
+        throw new ExecutionLimitError(
+          `grep: array element limit exceeded (${limit})`,
+          "array_elements",
+        );
+      }
+      yield batch;
+      batch = [];
+    }
+  } finally {
+    await iterator.return(undefined);
+  }
+}
 
 /** Safety limit to prevent stack overflow on deeply nested directories */
 const MAX_GREP_DEPTH = 256;
@@ -1047,7 +1073,7 @@ async function expandGlobPatternWithTypes(
  * Optimized recursive expansion that returns FileEntry with type info
  * Uses readdirWithFileTypes when available to avoid stat calls
  */
-async function expandRecursiveWithTypes(
+async function* expandRecursiveWithTypes(
   path: string,
   ctx: RuntimeCommandContext,
   includePatterns: string[] = [],
@@ -1061,10 +1087,9 @@ async function expandRecursiveWithTypes(
     maxResults: ctx.limits.maxArrayElements,
   },
   followSymlinks = false,
-  result: FileEntry[] = [],
   depth = 0,
-): Promise<FileEntry[]> {
-  if (depth >= MAX_GREP_DEPTH) return result;
+): AsyncGenerator<FileEntry> {
+  if (depth >= MAX_GREP_DEPTH) return;
   const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
 
   try {
@@ -1081,7 +1106,7 @@ async function expandRecursiveWithTypes(
         depth > 0 && !followSymlinks
           ? await ctx.fs.lstat(fullPath)
           : await ctx.fs.stat(fullPath);
-      if (stat.isSymbolicLink) return result;
+      if (stat.isSymbolicLink) return;
       isFile = stat.isFile;
       isDirectory = stat.isDirectory;
     }
@@ -1096,7 +1121,7 @@ async function expandRecursiveWithTypes(
             matchGlob(basename, p, { stripQuotes: true }),
           )
         ) {
-          return result;
+          return;
         }
       }
 
@@ -1107,16 +1132,16 @@ async function expandRecursiveWithTypes(
             matchGlob(basename, p, { stripQuotes: true }),
           )
         ) {
-          return result;
+          return;
         }
       }
       addTraversalResult(budget);
-      result.push({ path, isFile: true });
-      return result;
+      yield { path, isFile: true };
+      return;
     }
 
     if (!isDirectory) {
-      return result;
+      return;
     }
 
     // Check if directory should be excluded
@@ -1127,7 +1152,7 @@ async function expandRecursiveWithTypes(
           matchGlob(dirName, p, { stripQuotes: true }),
         )
       ) {
-        return result;
+        return;
       }
     }
 
@@ -1142,7 +1167,7 @@ async function expandRecursiveWithTypes(
         const entryPath = path
           ? `${path.replace(/\/$/, "")}/${entry.name}`
           : entry.name;
-        await expandRecursiveWithTypes(
+        yield* expandRecursiveWithTypes(
           entryPath,
           ctx,
           includePatterns,
@@ -1151,7 +1176,6 @@ async function expandRecursiveWithTypes(
           entry.isSymbolicLink ? undefined : entry.isFile,
           budget,
           followSymlinks,
-          result,
           depth + 1,
         );
       }
@@ -1162,7 +1186,7 @@ async function expandRecursiveWithTypes(
         useTraversalOperation(budget);
 
         const entryPath = path ? `${path.replace(/\/$/, "")}/${entry}` : entry;
-        await expandRecursiveWithTypes(
+        yield* expandRecursiveWithTypes(
           entryPath,
           ctx,
           includePatterns,
@@ -1171,7 +1195,6 @@ async function expandRecursiveWithTypes(
           undefined,
           budget,
           followSymlinks,
-          result,
           depth + 1,
         );
       }
@@ -1179,15 +1202,16 @@ async function expandRecursiveWithTypes(
   } catch (error) {
     rethrowFatalExecutionError(error);
     addTraversalResult(budget);
-    result.push({ path, error: `grep: ${path}: ${describeFsError(error)}\n` });
+    yield { path, error: `grep: ${path}: ${describeFsError(error)}\n` };
   }
 
-  return result;
+  return;
 }
 
 // fgrep is equivalent to grep -F
 export const fgrepCommand: RuntimeCommand = {
   name: "fgrep",
+  streaming: true,
 
   async execute(
     args: string[],
@@ -1201,6 +1225,7 @@ export const fgrepCommand: RuntimeCommand = {
 // egrep is equivalent to grep -E
 export const egrepCommand: RuntimeCommand = {
   name: "egrep",
+  streaming: true,
 
   async execute(
     args: string[],
