@@ -86,5 +86,4 @@ describe("rg incremental discovery and stdin", () => {
       exitCode: 0,
     });
   });
-
 });
