@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 import { InMemoryFs } from "../../fs/in-memory-fs/index.js";
 
@@ -47,6 +47,34 @@ describe("grep streaming file search", () => {
     expect(result.exitCode).toBe(0);
     expect(reads.size).toBeLessThan(200);
     expect(directories.size).toBeLessThan(200);
+  });
+
+  it("keeps independent file reads parallel in a fully consumed pipeline", async () => {
+    const fs = new InMemoryFs(tree(10));
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const readFile = fs.readFile.bind(fs);
+    fs.readFile = async (...args) => {
+      started++;
+      await gate;
+      return readFile(...args);
+    };
+    const result = new Bash({ fs }).exec("grep -rc MATCH /src | cat");
+    try {
+      await vi.waitFor(() => expect(started).toBe(10));
+    } finally {
+      release();
+      await result;
+    }
+    expect((await result).stdout).toBe(
+      Array.from(
+        { length: 10 },
+        (_, i) => `/src/D${String(i).padStart(4, "0")}/a.txt:30\n`,
+      ).join(""),
+    );
   });
 
   const files = {

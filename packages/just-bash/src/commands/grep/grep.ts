@@ -614,12 +614,12 @@ export const grepCommand: RuntimeCommand = {
       (first.length > 1 || (recursive && files.some((file) => file !== "-"))) &&
       !noFilename;
 
-    // Buffered execution retains its parallel reads. A streaming producer
-    // searches only the next file instead of reading ahead by a whole batch.
+    // Keep parallel reads bounded to one batch. Emit each result before
+    // discovering the next batch, so downstream closure stops further work.
     for await (const batch of fileBatches(
       iterator,
       first,
-      ctx.stdio ? 1 : 50,
+      50,
       traversalBudget.maxResults,
     )) {
       // Process batch in parallel
