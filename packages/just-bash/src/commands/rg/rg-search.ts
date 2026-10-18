@@ -28,6 +28,7 @@ import {
 } from "../search-engine/index.js";
 import { FileTypeRegistry } from "./file-types.js";
 import { GitignoreManager, loadGitignores } from "./gitignore.js";
+import { searchFileLines } from "./rg-file-lines.js";
 import type { RgOptions } from "./rg-options.js";
 import { canStreamStdin, searchStdinStream } from "./rg-stdin-stream.js";
 
@@ -1303,6 +1304,26 @@ async function searchFiles(
         const read = prepared[index];
         if (read.status === "rejected") throw read.reason;
         const fileData = read.value;
+        if (
+          streamingOutput &&
+          fileData &&
+          canStreamStdin(options) &&
+          !options.heading
+        ) {
+          if (!fileData.isBinary || options.searchBinary) {
+            anyMatch =
+              (await searchFileLines(
+                ctx,
+                fileData.content,
+                regex,
+                options,
+                showFilename ? file : "",
+                effectiveLineNumbers,
+              )) || anyMatch;
+          }
+          fileData.lease?.release();
+          continue;
+        }
         const res = (() => {
           if (!fileData) return null;
 
