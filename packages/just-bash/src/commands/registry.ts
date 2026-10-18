@@ -205,14 +205,17 @@ const commandLoaders: LazyCommandDef<CommandName>[] = [
   // Text processing
   {
     name: "grep",
+    streaming: true,
     load: async () => (await import("./grep/grep.js")).grepCommand,
   },
   {
     name: "fgrep",
+    streaming: true,
     load: async () => (await import("./grep/grep.js")).fgrepCommand,
   },
   {
     name: "egrep",
+    streaming: true,
     load: async () => (await import("./grep/grep.js")).egrepCommand,
   },
   {
