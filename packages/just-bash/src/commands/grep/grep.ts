@@ -684,12 +684,12 @@ export const grepCommand: RuntimeCommand = {
         (recursive && files.some((file) => file !== "-"))) &&
       !noFilename;
 
-    // Buffered execution retains its parallel reads. Streaming searches only
-    // the next file so a closed consumer stops both reads and traversal.
+    // Keep parallel reads bounded to one batch. Emit each result before
+    // discovering the next batch, so downstream closure stops further work.
     for await (const batch of fileBatches(
       iterator,
       first,
-      ctx.stdio ? 1 : 50,
+      50,
       traversalBudget.maxResults,
     )) {
       const inputs = await Promise.allSettled(
