@@ -17,6 +17,7 @@ import type {
   AwkStmt,
   AwkVariable,
 } from "./ast.js";
+import { awkBuiltins } from "./builtins.js";
 import { AwkLexer, type Token, TokenType } from "./lexer.js";
 import { parsePrintfStatement, parsePrintStatement } from "./parser2-print.js";
 
@@ -1183,10 +1184,16 @@ export class AwkParser {
 
     // Identifier (variable or function call)
     if (this.check(TokenType.IDENT)) {
-      const name = this.advance().value as string;
+      const token = this.advance();
+      const name = token.value as string;
 
-      // Function call
-      if (this.check(TokenType.LPAREN)) {
+      // Only built-ins permit whitespace before the opening parenthesis.
+      if (
+        this.check(TokenType.LPAREN) &&
+        (awkBuiltins.has(name) ||
+          (token.line === this.current().line &&
+            token.column + name.length === this.current().column))
+      ) {
         this.advance();
         const args: AwkExpr[] = [];
         // Skip newlines after opening paren (AWK allows multi-line function calls)
