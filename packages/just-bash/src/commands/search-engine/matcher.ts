@@ -96,6 +96,20 @@ export interface SearchResult {
   matchCount: number;
 }
 
+/** Match one line, letting required literals avoid regex work when they settle it. */
+export function matchesLine(
+  line: string,
+  regex: UserRegex,
+  preFilter?: PreFilter | null,
+): boolean {
+  if (preFilter) {
+    const verdict = preFilterVerdict(preFilter, line);
+    if (verdict !== "unknown") return verdict === "match";
+  }
+  regex.lastIndex = 0;
+  return regex.test(line);
+}
+
 /**
  * Search content for regex matches and format output
  *
@@ -205,14 +219,8 @@ export function searchContent(
   const needsPosition =
     onlyMatching || vimgrep || showColumn || showByteOffset || replace !== null;
   /** Whether a line matches: its literals settle most lines, RE2 the rest. */
-  const lineMatches = (line: string): boolean => {
-    if (preFilter) {
-      const verdict = preFilterVerdict(preFilter, line);
-      if (verdict !== "unknown") return verdict === "match";
-    }
-    regex.lastIndex = 0;
-    return regex.test(line);
-  };
+  const lineMatches = (line: string): boolean =>
+    matchesLine(line, regex, preFilter);
 
   let prospectiveLineCount = 1;
   for (let index = 0; index < content.length; index++) {

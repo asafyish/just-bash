@@ -1478,6 +1478,7 @@ async function searchFiles(
                 options,
                 showFilename ? file : "",
                 effectiveLineNumbers,
+                preFilter,
               )) || anyMatch;
           }
           fileData.lease?.release();
