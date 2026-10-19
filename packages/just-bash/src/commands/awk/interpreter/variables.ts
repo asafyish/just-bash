@@ -127,6 +127,12 @@ export function getArrayLength(
   name: string,
 ): number | undefined {
   const resolved = resolveArrayName(ctx, name);
+  if (
+    ctx.arrayAliases.has(resolved) &&
+    ctx.arrayAliases.get(resolved) === undefined
+  ) {
+    return undefined;
+  }
   const array =
     resolved === "ARGV"
       ? ctx.ARGV
