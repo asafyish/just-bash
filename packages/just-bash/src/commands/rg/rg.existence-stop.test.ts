@@ -28,7 +28,9 @@ describe("rg existence-only searches", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(await bash.exec("rg --files-without-match match /a /b")).toMatchObject({
+    expect(
+      await bash.exec("rg --files-without-match match /a /b"),
+    ).toMatchObject({
       stdout: "/b\n",
       stderr: "",
       exitCode: 0,
