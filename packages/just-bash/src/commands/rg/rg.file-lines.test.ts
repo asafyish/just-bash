@@ -77,7 +77,9 @@ describe("rg incremental file matching", () => {
     const timer = setTimeout(() => controller.abort(), 0);
     try {
       const [cancelled, complete] = await Promise.all([
-        bash.exec("set -o pipefail; rg '^.*[zZ]$' /in | cat", { signal: controller.signal }),
+        bash.exec("set -o pipefail; rg '^.*[zZ]$' /in | cat", {
+          signal: controller.signal,
+        }),
         new Bash({
           files: { "/in": "needle שלום\n" },
           defenseInDepth: false,
