@@ -1,5 +1,10 @@
 # just-bash
 
+## 3.6.0-yuz.13
+
+- Upgrade RE2JS to 2.8.8 so Boolean searches with word boundaries and anchors can use its DFA matcher.
+- Replace private matcher-input mutation with the public reset API. Translate only JavaScript Unicode/control escapes, preserving RE2 syntax and errors for unsupported escapes instead of silently matching literals.
+
 ## 3.6.0
 
 ### Minor Changes
