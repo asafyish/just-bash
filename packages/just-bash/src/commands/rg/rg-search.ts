@@ -29,6 +29,7 @@ import {
 import { FileTypeRegistry } from "./file-types.js";
 import { GitignoreManager, loadGitignores } from "./gitignore.js";
 import type { RgOptions } from "./rg-options.js";
+import { canStreamStdin, searchStdinStream } from "./rg-stdin-stream.js";
 
 /**
  * Check if data is gzip compressed (magic bytes)
@@ -292,6 +293,13 @@ export async function executeSearch(
   // Skip when `-f -` already consumed stdin for patterns to avoid
   // double-consuming it as both pattern source and search input.
   const stdinConsumedByPatternFile = options.patternFiles.includes("-");
+  if (
+    inputPaths.length === 0 &&
+    ctx.stdio?.hasInput &&
+    !stdinConsumedByPatternFile &&
+    canStreamStdin(options)
+  )
+    return searchStdinStream(ctx, regex, options);
   const stdinText =
     inputPaths.length === 0 && !stdinConsumedByPatternFile
       ? decodeBytesToUtf8(await readCommandStdin(ctx))
