@@ -438,7 +438,7 @@ export const jqCommand: RuntimeCommand = {
         readFiles(
           ctx,
           fileBindings.map((b) => b.file),
-          { cmdName: "jq", stopOnError: true },
+          { cmdName: "jq", stopOnError: true, allowStdinMarker: false },
         ),
       );
       if (result.exitCode !== 0) {
@@ -467,10 +467,6 @@ export const jqCommand: RuntimeCommand = {
       readNull = false,
     ): AsyncGenerator<{ content: string }> {
       if (nullInput && !readNull) return;
-      const stdin =
-        files.length === 0 || files.includes("-")
-          ? await withDefenseContext("stdin read", () => readCommandStdin(ctx))
-          : undefined;
       const paths = files.length ? files : ["-"];
       for (let index = 0; index < paths.length; index += 50) {
         if (stdio)
@@ -484,14 +480,22 @@ export const jqCommand: RuntimeCommand = {
               readFiles(ctx, regular, { cmdName: "jq", stopOnError: true }),
             )
           : { files: [], stderr: "", exitCode: 0 };
-        if (result.exitCode !== 0) throw new JqInputError(result.stderr);
         let fileIndex = 0;
         for (const path of batch) {
+          if (path !== "-" && fileIndex === result.files.length) break;
+          if (path === "-" && stdio)
+            await withDefenseContext("pipeline probe", () =>
+              stdio.write(unsafeBytesFromLatin1("")),
+            );
           const content =
-            path === "-" ? stdin : result.files[fileIndex++].content;
-          if (content !== undefined)
-            yield { content: decodeBytesToUtf8(content) };
+            path === "-"
+              ? await withDefenseContext("stdin read", () =>
+                  readCommandStdin(ctx),
+                )
+              : result.files[fileIndex++].content;
+          yield { content: decodeBytesToUtf8(content) };
         }
+        if (result.exitCode !== 0) throw new JqInputError(result.stderr);
       }
     }
 
@@ -735,7 +739,11 @@ export const jqCommand: RuntimeCommand = {
       const exitCode = exitStatus && (valueCount === 0 || !anyTruthy) ? 1 : 0;
 
       // jq emits text; the pipeline handles encoding.
-      const stdoutText = output ? (joinOutput ? output : `${output}\n`) : "";
+      const stdoutText = formatted.length
+        ? joinOutput
+          ? output
+          : `${output}\n`
+        : "";
       return {
         stdout: stdoutText,
         stderr: "",
