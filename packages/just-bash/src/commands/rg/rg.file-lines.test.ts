@@ -113,4 +113,15 @@ describe("rg incremental file matching", () => {
       exitCode: expected.exitCode,
     });
   });
+
+  it("fully consumes a file past the periodic yield with defense enabled", async () => {
+    const bash = new Bash({ files: { "/in": "match\n".repeat(80) } });
+    expect(
+      await bash.exec("rg --no-line-number match /in | cat"),
+    ).toMatchObject({
+      stdout: "match\n".repeat(80),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
