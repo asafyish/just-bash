@@ -1265,31 +1265,38 @@ async function readFileBatch(
   ctx: RuntimeCommandContext,
   files: string[],
   errors: BoundedStringBuilder,
-): Promise<Array<FileData | null>> {
+): Promise<Array<FileData | null> | undefined> {
   const paths = files.map((file) => ctx.fs.resolvePath(ctx.cwd, file));
   const prepared = await Promise.allSettled(
-    paths.map(async (path) => {
-      const stat = await ctx.fs.stat(path);
-      return {
-        size: stat.size,
-        // Bulk buffers coexist with the byte string and decoded text.
-        lease: ctx.executionScope?.reserveBytes(
-          "rg file text",
-          stat.size * 3,
-          "rg",
-        ),
-      };
-    }),
+    paths.map(
+      async (path): Promise<{ size: number; lease?: ResourceLease }> => {
+        const stat = await ctx.fs.stat(path);
+        return { size: stat.size };
+      },
+    ),
   );
   const readable = prepared.flatMap((result, index) =>
     result.status === "fulfilled" ? [{ ...result.value, index }] : [],
   );
   try {
+    for (const result of prepared) {
+      if (result.status === "rejected") rethrowFatalExecutionError(result.reason);
+    }
+    // Bulk buffers coexist with byte strings and decoded text. If that extra
+    // representation does not fit, retain the ordinary two-representation path.
+    const bulkBytes = readable.reduce((sum, file) => sum + file.size * 3, 0);
+    if (ctx.executionScope && bulkBytes > ctx.executionScope.remainingLiveBytes)
+      return undefined;
     for (const [index, result] of prepared.entries()) {
-      if (result.status === "rejected") {
-        rethrowFatalExecutionError(result.reason);
+      if (result.status === "rejected")
         errors.append(`rg: ${files[index]}: Unable to read file\n`);
-      }
+    }
+    for (const file of readable) {
+      file.lease = ctx.executionScope?.reserveBytes(
+        "rg file text",
+        file.size * 3,
+        "rg",
+      );
     }
     const reads = await readBatch(
       ctx.fs,

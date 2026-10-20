@@ -45,8 +45,6 @@ describe("mounted search capabilities", () => {
     const remote = remoteFs({ "/a": "foo" });
     fs.mount("/remote", remote.fs);
     expect(fs.readMany).toBeDefined();
-    fs.unmount("/remote");
-    expect(fs.readMany).toBeUndefined();
     const result = await new Bash({
       fs,
       executionLimits: { maxLiveBytes: 70, maxInputBytes: 1000 },
@@ -54,6 +52,8 @@ describe("mounted search capabilities", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
+    fs.unmount("/remote");
+    expect(fs.readMany).toBeUndefined();
     expect(
       await new MountableFs({ base: remote.fs }).readMany?.(["/a"]),
     ).toEqual([
