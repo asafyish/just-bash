@@ -3,6 +3,9 @@ import { Bash } from "../../Bash.js";
 import { InMemoryFs } from "../../fs/in-memory-fs/in-memory-fs.js";
 
 describe("rg incremental discovery and stdin", () => {
+  // Exceed the 64 KiB pipe even if the consumer is still loading.
+  const directory = (i: number) =>
+    `z${String(i).padStart(3, "0")}${"x".repeat(220)}`;
   it.each([
     "rg --files /a | head -n 1",
     "rg --no-line-number needle /a /b | head -n 1",
@@ -10,8 +13,8 @@ describe("rg incremental discovery and stdin", () => {
     const fs = new InMemoryFs({
       ...Object.fromEntries(
         ["a", "b"].flatMap((root) =>
-          Array.from({ length: 100 }, (_, i) => [
-            `/${root}/z${String(i).padStart(3, "0")}/file`,
+          Array.from({ length: 300 }, (_, i) => [
+            `/${root}/${directory(i)}/file`,
             "needle\n",
           ]),
         ),
@@ -35,8 +38,8 @@ describe("rg incremental discovery and stdin", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(visited).not.toContain("/a/z099");
-    expect(visited).not.toContain("/b/z099");
+    expect(visited).not.toContain(`/a/${directory(299)}`);
+    expect(visited).not.toContain(`/b/${directory(299)}`);
   });
 
   it.each([
