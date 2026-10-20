@@ -10,6 +10,36 @@ const files = {
 };
 
 describe("rg streaming pipelines", () => {
+  it("uses the same matching work budget as the buffered file search", async () => {
+    const bash = new Bash({
+      files: { "/file": "other\n".repeat(600) },
+      executionLimits: { maxLoopIterations: 1000 },
+    });
+    for (const suffix of ["", " | cat"]) {
+      expect(
+        await bash.exec(`set -o pipefail; rg missing /file${suffix}`),
+      ).toMatchObject({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      });
+    }
+  });
+
+  it("does not spend one pipeline write per nonmatching line", async () => {
+    const bash = new Bash({
+      files: { "/file": `needle\n${"other\n".repeat(6000)}` },
+      executionLimits: { maxWorkUnits: 1000, maxLoopIterations: 10000 },
+    });
+    expect(
+      await bash.exec("rg --no-line-number needle /file | cat"),
+    ).toMatchObject({
+      stdout: "needle\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("stops discovery and reading after head closes its pipe", async () => {
     const fs = new InMemoryFs({
       ...files,
