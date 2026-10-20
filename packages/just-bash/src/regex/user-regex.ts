@@ -420,8 +420,9 @@ export class UserRegex implements RegexLike {
     if (this._global) {
       this._lastIndex = 0;
     }
-    const matcher = this.acquireMatcher(input);
-    return matcher.find();
+    if (this._foldedLiteral !== null) return this.acquireMatcher(input).find();
+    // Boolean searches need no captures; RE2JS can use its DFA instead of the NFA.
+    return this._re2.test(input);
   }
 
   /**
