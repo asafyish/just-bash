@@ -173,4 +173,43 @@ describe("nested execution in streaming pipelines", () => {
     expect(result.stderr).toBe("err");
     expect(result.exitCode).toBe(0);
   });
+  it("keeps an untrusted stage restricted while its sibling awaits in a trusted scope", async () => {
+    let release!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const trusted = defineCommand(
+      "trusted",
+      async () => {
+        entered();
+        await paused;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      { streaming: true },
+    );
+    const restricted = defineCommand(
+      "restricted",
+      async () => {
+        await ready;
+        try {
+          const timer = setTimeout(() => {}, 0);
+          clearTimeout(timer);
+          return { stdout: "unexpected\n", stderr: "", exitCode: 0 };
+        } finally {
+          release();
+        }
+      },
+      { streaming: true, trusted: false },
+    );
+    const result = await new Bash({
+      customCommands: [trusted, restricted],
+    }).exec("trusted | restricted");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("setTimeout is blocked");
+    expect(result.exitCode).toBe(1);
+  });
 });

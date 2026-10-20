@@ -1014,7 +1014,7 @@ export async function executeExternalCommand(
     let commandResult = cmd.trusted
       ? // Trusted host-extension commands may opt in to unrestricted globals.
         await DefenseInDepthBox.runTrustedAsync(runBoundedCommand)
-      : await runBoundedCommand();
+      : await DefenseInDepthBox.runUntrustedAsync(runBoundedCommand);
     if (ctx.stdio && cmd.internalIsExtension) {
       commandResult = ctx.executionScope.accountResult(
         commandResult,
