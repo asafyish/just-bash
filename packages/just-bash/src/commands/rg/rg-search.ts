@@ -1240,13 +1240,16 @@ interface JsonMatch {
 async function* fileBatches(
   files: string[] | AsyncIterable<string>,
   size: number,
+  firstBatchSize = size,
 ): AsyncGenerator<string[]> {
   let batch: string[] = [];
+  let limit = firstBatchSize;
   for await (const file of files) {
     batch.push(file);
-    if (batch.length === size) {
+    if (batch.length === limit) {
       yield batch;
       batch = [];
+      limit = size;
     }
   }
   if (batch.length) yield batch;
@@ -1277,7 +1280,11 @@ async function searchFiles(
   // Compressed files retain both the decompressed byte buffer and decoded
   // string while being searched. Keep their concurrency deliberately small.
   const batchSize = options.searchZip ? 2 : 50;
-  outer: for await (const batch of fileBatches(files, batchSize)) {
+  outer: for await (const batch of fileBatches(
+    files,
+    batchSize,
+    streamingOutput ? 1 : batchSize,
+  )) {
     // Observe downstream closure even when the next file has no matches.
     if (streamingOutput) await streamingOutput.write(unsafeBytesFromLatin1(""));
     searchedFiles += batch.length;
