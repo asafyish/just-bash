@@ -50,15 +50,16 @@ describe("jq file input budgets", () => {
   });
 
   it("releases streamed batches but retains collected input", async () => {
-    const files = Array.from({ length: 101 }, () => "/a").join(" ");
-    for (const [args, exitCode] of [
-      ["empty", 0],
-      ["-s empty", 126],
-      ["-n 'inputs | empty'", 126],
-      ["-R empty", 126],
+    for (const [args, path, exitCode] of [
+      ["empty", "/a", 0],
+      ["-s empty", "/a", 126],
+      ["-n 'inputs | empty'", "/a", 126],
+      ["-R empty", "/a", 126],
+      ["-R empty", "/lines", 0],
     ] as const) {
+      const files = Array.from({ length: 101 }, () => path).join(" ");
       const bash = new Bash({
-        files: { "/a": input },
+        files: { "/a": input, "/lines": `${input}\n` },
         executionLimits: { maxLiveBytes: 10200 },
       });
       const result = await bash.exec(`jq ${args} ${files}`);

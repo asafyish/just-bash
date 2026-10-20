@@ -434,6 +434,7 @@ export const jqCommand: RuntimeCommand = {
     }
 
     const inputLeases: ResourceLease[] = [];
+    let rawRemainderLease: ResourceLease | undefined;
     try {
       // Read files bound via --rawfile/--slurpfile through the shared file
       // reader so they get the same security posture as normal input files.
@@ -512,8 +513,8 @@ export const jqCommand: RuntimeCommand = {
             }
             if (result.exitCode !== 0) throw new JqInputError(result.stderr);
           } finally {
-            // Collected inputs and raw lines spanning files outlive a batch.
-            if (!slurp && !rawInput && !readNull) {
+            // Collected inputs outlive a batch.
+            if (!slurp && !readNull) {
               for (const lease of inputLeases.splice(leaseStart))
                 lease.release();
             }
@@ -716,6 +717,14 @@ export const jqCommand: RuntimeCommand = {
               nl = text.indexOf("\n", start);
             }
             remainder = text.slice(start);
+            rawRemainderLease?.release();
+            rawRemainderLease = remainder
+              ? ctx.executionScope?.reserveBytes(
+                  "jq raw input",
+                  utf8ByteLength(remainder),
+                  "jq",
+                )
+              : undefined;
           }),
         );
         if (remainder !== "") {
@@ -800,6 +809,7 @@ export const jqCommand: RuntimeCommand = {
         exitCode: 5,
       };
     } finally {
+      rawRemainderLease?.release();
       for (const lease of inputLeases) lease.release();
     }
   },
