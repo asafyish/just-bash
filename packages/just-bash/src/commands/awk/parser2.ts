@@ -84,6 +84,16 @@ export class AwkParser {
 
   // ─── Helper methods ────────────────────────────────────────
 
+  private isFunctionCall(token: Token): boolean {
+    const name = token.value as string;
+    return (
+      this.check(TokenType.LPAREN) &&
+      (awkBuiltins.has(name) ||
+        (token.line === this.current().line &&
+          token.column + name.length === this.current().column))
+    );
+  }
+
   setPos(newPos: number): void {
     this.pos = newPos;
   }
@@ -1050,9 +1060,10 @@ export class AwkParser {
 
     // Variable or function call
     if (this.check(TokenType.IDENT)) {
-      const name = this.advance().value as string;
+      const token = this.advance();
+      const name = token.value as string;
       // Check for function call
-      if (this.check(TokenType.LPAREN)) {
+      if (this.isFunctionCall(token)) {
         this.advance();
         const args: AwkExpr[] = [];
         if (!this.check(TokenType.RPAREN)) {
@@ -1174,12 +1185,7 @@ export class AwkParser {
       const name = token.value as string;
 
       // Only built-ins permit whitespace before the opening parenthesis.
-      if (
-        this.check(TokenType.LPAREN) &&
-        (awkBuiltins.has(name) ||
-          (token.line === this.current().line &&
-            token.column + name.length === this.current().column))
-      ) {
+      if (this.isFunctionCall(token)) {
         this.advance();
         const args: AwkExpr[] = [];
         // Skip newlines after opening paren (AWK allows multi-line function calls)

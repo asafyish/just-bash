@@ -25,4 +25,24 @@ describe("awk parenthesized concatenation", () => {
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
   });
+
+  it("concatenates a field selected by a variable with parentheses", async () => {
+    const result = await new Bash().exec(
+      `awk 'BEGIN { i=1; $0="a b"; print $i ("x") }'`,
+    );
+    expect(result).toMatchObject({ stdout: "ax\n", stderr: "", exitCode: 0 });
+  });
+
+  it("rejects a defined function name used as a variable", async () => {
+    for (const separator of [" ", "\\\n"]) {
+      const result = await new Bash().exec(
+        `awk 'function twice(x) { return x*2 } BEGIN { print twice${separator}(3) }'`,
+      );
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "cannot use function twice as a variable",
+      );
+      expect(result.exitCode).not.toBe(0);
+    }
+  });
 });
