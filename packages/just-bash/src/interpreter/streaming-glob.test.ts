@@ -39,4 +39,17 @@ describe("streaming pipeline glob arguments", () => {
       await bash.exec("shopt -s nullglob; cat /missing* /a.txt | cat"),
     ).toMatchObject({ stdout: "a\n", stderr: "", exitCode: 0 });
   });
+
+  it("captures substitutions inside glob patterns before piping file contents", async () => {
+    const bash = new Bash({ files: { "/1.txt": "one\n", "/2.txt": "two\n" } });
+    for (const pattern of ["/@($(seq 1)).txt", "/@(`seq 1`).txt"]) {
+      expect(
+        await bash.exec(`shopt -s extglob; cat ${pattern} | cat`),
+      ).toMatchObject({
+        stdout: "one\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
 });
