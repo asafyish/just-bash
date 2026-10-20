@@ -387,7 +387,7 @@ export async function traverseFileTree(
       for (const next of batch) budget.visit(next.depth);
       // Settle every read before a failure or cancellation can leave this walk.
       const results = await Promise.allSettled(
-        batch.map((next) => options.fs.lstat(next.path)),
+        batch.map(async (next) => options.fs.lstat(next.path)),
       );
       for (let i = 0; i < batch.length; i++) batch[i].metadata = results[i];
       budget.checkpoint(0);
