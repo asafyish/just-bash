@@ -1281,7 +1281,8 @@ async function readFileBatch(
   );
   try {
     for (const result of prepared) {
-      if (result.status === "rejected") rethrowFatalExecutionError(result.reason);
+      if (result.status === "rejected")
+        rethrowFatalExecutionError(result.reason);
     }
     // Bulk buffers coexist with byte strings and decoded text. If that extra
     // representation does not fit, retain the ordinary two-representation path.

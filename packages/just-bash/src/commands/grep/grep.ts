@@ -561,7 +561,9 @@ export const grepCommand: RuntimeCommand = {
     // stdin. grep runs regex over text — decode bytes to UTF-8 so multibyte
     // codepoints match `.` / character classes correctly.
     if (files.length === 0) {
-      let input = stdinUsedForPatterns ? "" : decodeBytesToUtf8(await readStdin());
+      let input = stdinUsedForPatterns
+        ? ""
+        : decodeBytesToUtf8(await readStdin());
       const binary = input.includes("\0");
       if (binary && binaryMode === "without-match") input = "";
       const result = searchContent(input, regex, {
@@ -681,8 +683,7 @@ export const grepCommand: RuntimeCommand = {
       first.push(entry.value);
     }
     const showFilename =
-      (withFilename || first.length > 1 || recursiveFilename) &&
-      !noFilename;
+      (withFilename || first.length > 1 || recursiveFilename) && !noFilename;
 
     // Keep parallel reads bounded to one batch. Emit each result before
     // discovering the next batch, so downstream closure stops further work.
@@ -699,10 +700,9 @@ export const grepCommand: RuntimeCommand = {
           if (entry.error) return { error: entry.error };
           if (entry.isStdin) {
             return {
-              content:
-                entry.stdinAtEof
-                  ? ""
-                  : decodeBytesToUtf8(await readStdin()),
+              content: entry.stdinAtEof
+                ? ""
+                : decodeBytesToUtf8(await readStdin()),
             };
           }
           const basename = entry.path.split("/").pop() || entry.path;
