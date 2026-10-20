@@ -56,6 +56,10 @@ export function accountFileInput(
   bytes: number,
   site: string,
 ): void {
+  if (ctx.executionScope) {
+    ctx.executionScope.consumeInput(bytes, site);
+    return;
+  }
   if (
     !Number.isSafeInteger(bytes) ||
     bytes < 0 ||
@@ -66,7 +70,6 @@ export function accountFileInput(
       "string_length",
     );
   }
-  ctx.executionScope?.consumeInput(bytes, site);
 }
 
 /**
@@ -138,13 +141,16 @@ export async function readFiles(
           const content = await readBytesFrom(ctx.fs, filePath);
           if (inputLeases) {
             const bytes = latin1FromBytes(content).length;
-            if (bytes > size) {
-              throw new ExecutionLimitError(
-                `${cmdName}: file grew while being read`,
-                "string_length",
+            accountFileInput(ctx, bytes, cmdName);
+            if (bytes > size && ctx.executionScope) {
+              inputLeases.push(
+                ctx.executionScope.reserveBytes(
+                  "file input",
+                  (bytes - size) * 2,
+                  cmdName,
+                ),
               );
             }
-            accountFileInput(ctx, bytes, cmdName);
           }
           return { filename: file, content, error: null as string | null };
         } catch (error) {
