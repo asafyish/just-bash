@@ -1001,8 +1001,8 @@ export async function executeExternalCommand(
         () => cmd.execute(args, guardedCmdCtx),
       );
 
-    const runBoundedCommand = () =>
-      runWithExecutionDeadline(
+    const runBoundedCommand = async () => {
+      let commandResult = await runWithExecutionDeadline(
         runCommand,
         guardedCmdCtx,
         revokeCommandContexts,
@@ -1010,24 +1010,25 @@ export async function executeExternalCommand(
         ctx.executionScope,
         ctx.state.signal,
       );
+      if (ctx.stdio && cmd.internalIsExtension) {
+        commandResult = ctx.executionScope.accountResult(
+          commandResult,
+          commandName,
+          inheritedOutputBytes,
+        );
+      }
+      return {
+        ...commandResult,
+        internalStdinConsumed:
+          commandResult.internalStdinConsumed ??
+          (stdinAccessed ? stdin.length : 0),
+      };
+    };
 
-    let commandResult = cmd.trusted
+    return cmd.trusted
       ? // Trusted host-extension commands may opt in to unrestricted globals.
         await DefenseInDepthBox.runTrustedAsync(runBoundedCommand)
       : await DefenseInDepthBox.runUntrustedAsync(runBoundedCommand);
-    if (ctx.stdio && cmd.internalIsExtension) {
-      commandResult = ctx.executionScope.accountResult(
-        commandResult,
-        commandName,
-        inheritedOutputBytes,
-      );
-    }
-    return {
-      ...commandResult,
-      internalStdinConsumed:
-        commandResult.internalStdinConsumed ??
-        (stdinAccessed ? stdin.length : 0),
-    };
   } catch (error) {
     if (error instanceof BrokenPipeError)
       return { stdout: "", stderr: "", exitCode: 141 };
