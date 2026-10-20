@@ -1,6 +1,6 @@
 import {
+  type ByteString,
   decodeBytesToUtf8,
-  EMPTY_BYTES,
   encodeUtf8ToBytes,
 } from "../../encoding.js";
 import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
@@ -423,12 +423,11 @@ export const grepCommand: RuntimeCommand = {
     // A pattern operand can hold several newline-separated patterns, so expand
     // every collected operand once before the -f files are appended.
     patterns = patterns.flatMap(splitPatternOperand);
-    const stdin =
-      (!recursive && operands.length === 0) ||
-      operands.includes("-") ||
-      patternFiles.includes("-")
-        ? await readCommandStdin(ctx)
-        : EMPTY_BYTES;
+    let stdin: Promise<ByteString> | undefined;
+    const readStdin = () => {
+      stdin ??= readCommandStdin(ctx);
+      return stdin;
+    };
 
     // Collect patterns: -e/positional first, then each -f file in order.
     // All of them OR-combine, exactly like GNU grep.
@@ -448,7 +447,9 @@ export const grepCommand: RuntimeCommand = {
       if (patternFile === "-") {
         // stdin is a stream: the first `-f -` drains it, any later one reads
         // EOF and contributes nothing.
-        content = stdinUsedForPatterns ? "" : decodeBytesToUtf8(stdin);
+        content = stdinUsedForPatterns
+          ? ""
+          : decodeBytesToUtf8(await readStdin());
         stdinUsedForPatterns = true;
       } else {
         try {
@@ -559,8 +560,8 @@ export const grepCommand: RuntimeCommand = {
     // If no files and stdin is provided (including empty string), read from
     // stdin. grep runs regex over text — decode bytes to UTF-8 so multibyte
     // codepoints match `.` / character classes correctly.
-    if (files.length === 0 && stdin !== undefined) {
-      let input = stdinUsedForPatterns ? "" : decodeBytesToUtf8(stdin);
+    if (files.length === 0) {
+      let input = stdinUsedForPatterns ? "" : decodeBytesToUtf8(await readStdin());
       const binary = input.includes("\0");
       if (binary && binaryMode === "without-match") input = "";
       const result = searchContent(input, regex, {
@@ -673,24 +674,25 @@ export const grepCommand: RuntimeCommand = {
     }
     const iterator = entries();
     const first: FileEntry[] = [];
-    for (let i = 0; i < 2; i++) {
+    const recursiveFilename = recursive && files.some((file) => file !== "-");
+    for (let i = 0; i < (recursiveFilename || noFilename ? 1 : 2); i++) {
       const entry = await iterator.next();
       if (entry.done) break;
       first.push(entry.value);
     }
     const showFilename =
-      (withFilename ||
-        first.length > 1 ||
-        (recursive && files.some((file) => file !== "-"))) &&
+      (withFilename || first.length > 1 || recursiveFilename) &&
       !noFilename;
 
     // Keep parallel reads bounded to one batch. Emit each result before
     // discovering the next batch, so downstream closure stops further work.
+    const batchSize = ctx.stdio && files.includes("-") ? 1 : 50;
     for await (const batch of fileBatches(
       iterator,
       first,
-      50,
+      batchSize,
       traversalBudget.maxResults,
+      ctx.stdio ? 1 : batchSize,
     )) {
       const inputs = await Promise.allSettled(
         batch.map(async (entry): Promise<FileInput> => {
@@ -698,9 +700,9 @@ export const grepCommand: RuntimeCommand = {
           if (entry.isStdin) {
             return {
               content:
-                entry.stdinAtEof || stdin === undefined
+                entry.stdinAtEof
                   ? ""
-                  : decodeBytesToUtf8(stdin),
+                  : decodeBytesToUtf8(await readStdin()),
             };
           }
           const basename = entry.path.split("/").pop() || entry.path;
@@ -903,13 +905,18 @@ async function* fileBatches(
   first: FileEntry[],
   size: number,
   limit: number,
+  firstBatchSize: number,
 ): AsyncGenerator<FileEntry[]> {
-  let batch = first;
+  let batch: FileEntry[] = [];
+  let firstIndex = 0;
   let count = 0;
   try {
     for (;;) {
-      while (batch.length < size) {
-        const next = await iterator.next();
+      while (batch.length < (count === 0 ? firstBatchSize : size)) {
+        const next =
+          firstIndex < first.length
+            ? { done: false, value: first[firstIndex++] }
+            : await iterator.next();
         if (next.done) break;
         batch.push(next.value);
       }

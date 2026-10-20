@@ -59,7 +59,7 @@ describe("grep streaming file search", () => {
     const readFile = fs.readFile.bind(fs);
     fs.readFile = async (...args) => {
       started++;
-      await gate;
+      if (started > 1) await gate;
       return readFile(...args);
     };
     const result = new Bash({ fs }).exec("grep -rc MATCH /src | cat");
@@ -159,5 +159,31 @@ describe("grep streaming file search", () => {
     expect(result.stdout).toBe("/src/D0000/a.txt:1:MATCH\n141:141 0\n");
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
+  });
+
+  it("emits an earlier file before reading a later stdin operand", async () => {
+    const result = await new Bash({
+      files: { "/hit": "MATCH\n".repeat(12000) },
+      executionLimits: { maxInputBytes: 65536 },
+    }).exec("seq 1000000000 | grep MATCH /hit - | head -n 1");
+    expect(result).toMatchObject({
+      stdout: "/hit:MATCH\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("emits the first recursive file before looking for a second match", async () => {
+    const fs = new InMemoryFs({ "/src/a": "MATCH\n".repeat(12000) });
+    for (let i = 0; i < 30; i++) await fs.mkdir(`/src/z${i}`);
+    const result = await new Bash({
+      fs,
+      executionLimits: { maxGlobOperations: 10 },
+    }).exec("grep -r MATCH /src | head -n 1");
+    expect(result).toMatchObject({
+      stdout: "/src/a:MATCH\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
