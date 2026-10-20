@@ -41,6 +41,7 @@ import {
   DefenseInDepthBox,
   SecurityViolationError,
 } from "../security/defense-in-depth-box.js";
+import { _setTimeout } from "../timers.js";
 import type {
   CommandRegistry,
   ExecResult,
@@ -573,7 +574,7 @@ export class Interpreter {
               let emitted = 0;
               return executeFor(interpreter.ctx, command, async (result) => {
                 if ((++emitted & 63) === 0)
-                  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+                  await new Promise<void>((resolve) => _setTimeout(resolve, 0));
                 relinquishPipelineOutput(
                   this.ctx.executionScope,
                   result.internalOutputAccounting?.stdout ?? 0,

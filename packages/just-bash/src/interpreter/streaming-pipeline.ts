@@ -23,7 +23,12 @@ import {
   type ResolveCommandResult,
   resolveCommand,
 } from "./command-resolution.js";
-import { ExecutionAbortedError, ExecutionLimitError } from "./errors.js";
+import {
+  ErrexitError,
+  ExecutionAbortedError,
+  ExecutionLimitError,
+  ExitError,
+} from "./errors.js";
 import { globPatternHasVarRef } from "./expansion/analysis.js";
 import { patternHasCommandSubstitution } from "./expansion/pattern-expansion.js";
 import { SHELL_BUILTINS } from "./helpers/shell-constants.js";
@@ -263,13 +268,25 @@ export async function executeStreamingPipeline(
                 )
               : "";
           const outputCheckpoint = ctx.executionScope.outputBytesUsed;
-          const rawResult = await execute(
-            stage.node,
-            state,
-            stdin,
-            stage.streaming ? stdio : undefined,
-            stage.resolved,
-          );
+          let rawResult: ExecResult;
+          try {
+            rawResult = await execute(
+              stage.node,
+              state,
+              stdin,
+              stage.streaming ? stdio : undefined,
+              stage.resolved,
+            );
+          } catch (error) {
+            // A pipeline stage exits its subshell, not the enclosing script.
+            if (!(error instanceof ExitError || error instanceof ErrexitError))
+              throw error;
+            rawResult = {
+              stdout: error.stdout,
+              stderr: error.stderr,
+              exitCode: error.exitCode,
+            };
+          }
           const result = ctx.executionScope.accountResult(
             rawResult,
             "pipeline",

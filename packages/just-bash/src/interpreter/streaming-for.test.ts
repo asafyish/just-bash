@@ -35,4 +35,41 @@ describe("for-loop pipeline producers", () => {
       exitCode: 0,
     });
   });
+
+  it("fully consumes more than 64 loop statements with defense enabled", async () => {
+    const words = Array(80).fill("x").join(" ");
+    expect(
+      await new Bash().exec(`for i in ${words}; do echo ok; done | cat`),
+    ).toMatchObject({
+      stdout: "ok\n".repeat(80),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("contains exit and errexit within the producer stage", async () => {
+    for (const command of ["exit 7", "false"]) {
+      expect(
+        await new Bash().exec(
+          `set -e; for i in a; do ${command}; done | cat; echo survived`,
+        ),
+      ).toMatchObject({
+        stdout: "survived\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+  });
+
+  it("retains diagnostics when the consumer closes without reading", async () => {
+    expect(
+      await new Bash().exec(
+        "for i in a; do echo err >&2; echo out; done | head -n 0",
+      ),
+    ).toMatchObject({
+      stdout: "",
+      stderr: "err\n",
+      exitCode: 0,
+    });
+  });
 });

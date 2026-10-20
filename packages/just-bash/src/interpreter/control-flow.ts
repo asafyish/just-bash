@@ -271,12 +271,12 @@ async function executeForBody(
       try {
         for (const stmt of node.body) {
           const stmtResult = await ctx.executeStatement(stmt);
-          if (emit) await emit(stmtResult);
           output.append(emit ? "" : stmtResult.stdout, stmtResult.stderr);
+          if (emit) await emit(stmtResult);
           exitCode = stmtResult.exitCode;
         }
       } catch (error) {
-        if (error instanceof BrokenPipeError) throw error;
+        if (error instanceof BrokenPipeError) return output.build(141);
         const loopResult = handleLoopError(
           error,
           output.stdout,
