@@ -240,10 +240,8 @@ export class UserRegex implements RegexLike {
   private _lastIndex = 0;
   // Cache native RegExp for compatibility - created lazily
   private _nativeRegex: RegExp | null = null;
-  // Reusable RE2 Matcher to avoid per-call allocation in tight grep loops.
-  // Matcher allocation dominates regex.test/exec cost when called once per line
-  // across thousands of lines. We mutate charSequence in-place (not resetMatcherInput,
-  // which is broken in re2js 1.2.1 — see acquireMatcher).
+  // Reuse the stateful RE2 Matcher for searches that need positions or captures.
+  // See acquireMatcher for input reset at the pinned RE2JS version.
   private _matcher: Re2Matcher | null = null;
   private _matcherInput: string | null = null;
   // Set when the pattern is a case-insensitive ASCII literal; see

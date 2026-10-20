@@ -3,13 +3,17 @@ import { UserRegex } from "./user-regex.js";
 
 describe("boolean regex search", () => {
   it.each([
-    ["cust.?item|customer[-_ ]+item|sku.*cust.?item", "i"],
+    [
+      "cust.?item|cust[-_ ]+item|customer[-_ ]+item|custom[-_ ]+item|cust[-_ ]*sku|cust.?item.*sku|sku.*cust.?item",
+      "i",
+    ],
     ["(?<word>cust).?(item)|sku", "gi"],
     ["^item$|^sku$", "im"],
     ["cust.*item", "s"],
     ["\\b(sku|item)\\b", "i"],
     ["(Σ|k|s)+", "i"],
     ["a*", "g"],
+    ["missing|", ""],
   ])("agrees with captured search for /%s/%s", (pattern, flags) => {
     const boolean = new UserRegex(pattern, flags);
     const captured = new UserRegex(pattern, flags);
@@ -23,7 +27,9 @@ describe("boolean regex search", () => {
       "cust\nitem",
       "cuſt item",
       "ςσΣ K S ſ",
+      "İ",
       "😀cust😀item😀",
+      "\ud800cust\udc00item",
       "xitemx",
       "unrelated",
     ]) {
