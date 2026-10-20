@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("rg existence-only searches", () => {
+  it("does not truncate the match spans used for multiline inversion", async () => {
+    const bash = new Bash({ files: { "/input": "x\nx\n" } });
+    for (const input of [
+      "rg -Uv -l x /input",
+      "printf 'x\\nx\\n' | rg -Uv -q x",
+    ]) {
+      expect(await bash.exec(input)).toMatchObject({
+        stdout: "",
+        stderr: "",
+        exitCode: 1,
+      });
+    }
+  });
+
   it.each([
     ["-l", "/input\n", 0],
     ["-q", "", 0],

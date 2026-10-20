@@ -348,6 +348,7 @@ export async function executeSearch(
       maxCount:
         !options.json &&
         !options.stats &&
+        (!options.multiline || !options.invertMatch) &&
         (options.quiet || options.filesWithMatches || options.filesWithoutMatch)
           ? 1
           : options.maxCount,
@@ -1521,6 +1522,7 @@ async function searchFiles(
               maxCount:
                 !options.json &&
                 !options.stats &&
+                (!options.multiline || !options.invertMatch) &&
                 (options.quiet ||
                   options.filesWithMatches ||
                   options.filesWithoutMatch)
