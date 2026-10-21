@@ -885,8 +885,9 @@ export async function executeExternalCommand(
     ctx.execFn(script, options, false);
   const execWithInheritedStdin: NonNullable<
     RuntimeCommandContext["execWithInheritedStdin"]
-  > = (script, options) =>
-    ctx.execFn(
+  > = (script, options) => {
+    if (ctx.stdio) throw new Error("Streaming commands must read from stdio");
+    return ctx.execFn(
       script,
       {
         ...options,
@@ -895,6 +896,7 @@ export async function executeExternalCommand(
       },
       true,
     );
+  };
 
   // Build exported environment for commands that need it (printenv, env, etc.)
   // Most builtins need access to the full env to modify state

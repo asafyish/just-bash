@@ -1,11 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "../Bash.js";
 import { defineCommand } from "../custom-commands.js";
-import { latin1FromBytes } from "../encoding.js";
+import { encodeUtf8ToBytes, latin1FromBytes } from "../encoding.js";
 import { InMemoryFs } from "../fs/in-memory-fs/index.js";
 import { readCommandStdin } from "../streams/command-stdio.js";
+import { ExecutionLimitError } from "./errors.js";
 
 describe("streaming pipeline input reservations", () => {
+  it("preserves UTF-8 output before a fatal streaming error", async () => {
+    const fail = defineCommand(
+      "fail",
+      async (_args, ctx) => {
+        await ctx.stdio?.write(encodeUtf8ToBytes("é\n"));
+        throw new ExecutionLimitError("stopped", "iterations");
+      },
+      { streaming: true },
+    );
+    const result = await new Bash({ customCommands: [fail] }).exec(
+      "printf ö; seq 1 | fail",
+    );
+    expect(result.stdout).toBe("öé\n");
+    expect(result.exitCode).toBe(126);
+  });
+
   it("bounds buffered streaming command fallbacks by live bytes", async () => {
     const result = await new Bash({
       executionLimits: { maxLiveBytes: 64 },

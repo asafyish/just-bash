@@ -4,6 +4,25 @@ import { defineCommand } from "../custom-commands.js";
 import { ExecutionLimitError } from "./errors.js";
 
 describe("nested execution in streaming pipelines", () => {
+  it("rejects implicit buffered stdin inheritance from a streaming command", async () => {
+    const delegate = defineCommand(
+      "delegate",
+      async (_args, ctx) => {
+        if (!ctx.execWithInheritedStdin) throw new Error("Expected exec");
+        return ctx.execWithInheritedStdin("wc -c", { cwd: ctx.cwd });
+      },
+      { streaming: true },
+    );
+    const result = await new Bash({ customCommands: [delegate] }).exec(
+      "seq 3 | delegate",
+    );
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe(
+      "delegate: Streaming commands must read from stdio\n",
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
   it("normalizes accounting on frozen empty extension results", async () => {
     let entered!: () => void;
     const ready = new Promise<void>((resolve) => {

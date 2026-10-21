@@ -124,7 +124,11 @@ export async function executeStreamingPipeline(
   const abort = new AbortController();
   const combined = combineAbortSignals(ctx.state.signal, abort.signal);
   const pipes = stages.slice(1).map(() => new BytePipe(ctx.executionScope));
-  const output = new ExecutionOutputAccumulator(ctx.executionScope, "pipeline");
+  const output = new ExecutionOutputAccumulator(
+    ctx.executionScope,
+    "pipeline",
+    "bytes",
+  );
   let cancelled = false;
   const cancel = (error: unknown) => {
     if (cancelled) return;
