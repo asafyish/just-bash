@@ -31,6 +31,7 @@ import {
 } from "./errors.js";
 import { globPatternHasVarRef } from "./expansion/analysis.js";
 import { patternHasCommandSubstitution } from "./expansion/pattern-expansion.js";
+import { expandWord } from "./expansion.js";
 import { SHELL_BUILTINS } from "./helpers/shell-constants.js";
 import { beginIsolatedShellState } from "./state-transaction.js";
 import type { InterpreterContext, InterpreterState } from "./types.js";
@@ -111,6 +112,15 @@ export async function executeStreamingPipeline(
       !command.args.every((arg) => arg.parts.every(isStaticPart))
     )
       return;
+    for (const redirect of command.redirections) {
+      if (
+        redirect.target.type === "Word" &&
+        ["/dev/stdout", "/dev/stderr", "/dev/full"].includes(
+          await expandWord(ctx, redirect.target),
+        )
+      )
+        return;
+    }
     const name = command.name.parts[0].value;
     if (SHELL_BUILTINS.has(name) || ctx.state.functions.has(name)) return;
     const registered = ctx.commands.get(name.split("/").pop() ?? name);
@@ -121,6 +131,10 @@ export async function executeStreamingPipeline(
       return;
     candidates.push({ node: command, name });
   }
+  // Redirect writes are deferred. Keep multiple redirecting stages ordered,
+  // since even different target paths may alias the same file.
+  if (candidates.filter(({ node }) => node.redirections.length > 0).length > 1)
+    return;
   if (
     !candidates.some(
       ({ name }) => ctx.commands.get(name.split("/").pop() ?? name)?.streaming,

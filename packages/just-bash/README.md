@@ -89,7 +89,7 @@ in `PIPESTATUS` and under `pipefail`, matching bash. Plain `cat` and `head`
 stream standard input, and `seq` streams unless `-w` is used. Other registered
 commands can participate through a bounded buffering adapter. Pipelines with
 builtins, functions, `|&`, or `lastpipe` keep the buffered executor. Redirections
-also keep the buffered executor except for static stderr targets (`2>`, `2>>`,
+also keep the buffered executor except for static stderr targets on a single stage (`2>`, `2>>`,
 and `2>|`). Pipelines that would exceed 64 active streaming stages across
 nested executions remain buffered. `Bash.exec()` still returns a complete result bounded by
 `maxOutputSize`.
