@@ -127,7 +127,8 @@ export async function readFiles(
         }
         try {
           const filePath = ctx.fs.resolvePath(ctx.cwd, file);
-          const size = inputLeases ? (await ctx.fs.stat(filePath)).size : 0;
+          const stat = inputLeases ? await ctx.fs.stat(filePath) : undefined;
+          const size = stat?.isFile ? stat.size : 0;
           if (inputLeases && ctx.executionScope) {
             // Reserve both the byte buffer and its decoded text until consumed.
             inputLeases.push(

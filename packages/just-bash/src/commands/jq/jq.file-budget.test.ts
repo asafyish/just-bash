@@ -5,6 +5,23 @@ import { InMemoryFs } from "../../fs/in-memory-fs/in-memory-fs.js";
 const input = JSON.stringify("x".repeat(98));
 
 describe("jq file input budgets", () => {
+  it("does not reserve directory metadata as file content", async () => {
+    class DirectorySizeFs extends InMemoryFs {
+      override async stat(path: string) {
+        const stat = await super.stat(path);
+        return stat.isDirectory ? { ...stat, size: 4096 } : stat;
+      }
+    }
+    const bash = new Bash({
+      fs: new DirectorySizeFs({ "/directory/a": input }),
+      executionLimits: { maxLiveBytes: 300 },
+    });
+    const result = await bash.exec("jq empty /directory");
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("jq: /directory: No such file or directory\n");
+    expect(result.exitCode).toBe(2);
+  });
+
   it("stops the execution after a single oversized file", async () => {
     const bash = new Bash({
       files: { "/a": input },
