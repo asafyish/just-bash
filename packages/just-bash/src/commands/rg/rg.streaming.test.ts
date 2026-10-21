@@ -40,11 +40,33 @@ describe("rg streaming pipelines", () => {
     expect(directories).not.toContain("/src/sub");
   });
 
+  it("searches the first file before traversing sparse nonmatching directories", async () => {
+    const fs = new InMemoryFs({
+      "/src/a.json": "needle\n".repeat(10000),
+      "/src/z/file.txt": "other\n",
+    });
+    const visited: string[] = [];
+    const readdir = fs.readdirWithFileTypes.bind(fs);
+    fs.readdirWithFileTypes = async (path) => {
+      visited.push(path);
+      return readdir(path);
+    };
+    const result = await new Bash({ fs }).exec(
+      "rg --no-line-number -g '*.json' needle /src | head -n 1",
+    );
+    expect(result).toMatchObject({
+      stdout: "/src/a.json:needle\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(visited).not.toContain("/src/z");
+  });
+
   it("reads ahead concurrently without searching files after the consumer closes", async () => {
     const input: Record<string, string> = Object.create(null);
     for (let i = 0; i < 120; i++)
       input[`/src/f${String(i).padStart(3, "0")}`] =
-        i === 0 ? "needle\n" : "other\n".repeat(500);
+        i === 1 ? "needle\n" : "other\n".repeat(500);
     const fs = new InMemoryFs(input);
     const read = fs.readFileBuffer.bind(fs);
     let pending = 0;
@@ -61,7 +83,7 @@ describe("rg streaming pipelines", () => {
     };
     const result = await new Bash({ fs }).exec("rg -l needle /src | head -1");
     expect(result).toMatchObject({
-      stdout: "/src/f000\n",
+      stdout: "/src/f001\n",
       stderr: "",
       exitCode: 0,
     });

@@ -50,7 +50,9 @@ describe("rg file-size admission", () => {
         "/src/sub/c": "no\n",
       },
     });
-    expect(await bash.exec(`rg --max-filesize 4 ${flags} /src`)).toMatchObject({
+    expect(
+      await bash.exec(`rg --no-line-number --max-filesize 4 ${flags} /src`),
+    ).toMatchObject({
       stdout,
       stderr: "",
       exitCode,
@@ -68,12 +70,16 @@ describe("rg file-size admission", () => {
       stderr: "",
       exitCode: 0,
     });
-    expect(await bash.exec("rg --max-filesize 4 hit /src/a")).toMatchObject({
+    expect(
+      await bash.exec("rg --no-line-number --max-filesize 4 hit /src/a"),
+    ).toMatchObject({
       stdout: "",
       stderr: "",
       exitCode: 1,
     });
-    expect(await bash.exec("rg --max-filesize 0 -l hit /src")).toMatchObject({
+    expect(
+      await bash.exec("rg --no-line-number --max-filesize 0 -l hit /src"),
+    ).toMatchObject({
       stdout: "/src/a\n/src/b\n",
       stderr: "",
       exitCode: 0,
@@ -92,7 +98,9 @@ describe("rg file-size admission", () => {
       ],
     });
     expect(
-      await bash.exec("rg --max-filesize 4 --pre pre hit /src"),
+      await bash.exec(
+        "rg --no-line-number --max-filesize 4 --pre pre hit /src",
+      ),
     ).toMatchObject({
       stdout: "/src/b:hit\n",
       stderr: "",
@@ -126,7 +134,7 @@ describe("rg file-size admission", () => {
       files: { "/src/a": "hit🙂\n", "/src/b": "hit\n" },
     });
     expect(
-      await bash.exec("rg --max-filesize 4 --stats hit /src"),
+      await bash.exec("rg --no-line-number --max-filesize 4 --stats hit /src"),
     ).toMatchObject({
       stdout:
         "/src/b:hit\n\n1 matches\n1 matched lines\n1 files contained matches\n1 files searched\n4 bytes searched\n",
@@ -134,7 +142,9 @@ describe("rg file-size admission", () => {
       exitCode: 0,
     });
     expect(
-      await bash.exec("rg --max-filesize 4 --json -q hit /src"),
+      await bash.exec(
+        "rg --no-line-number --max-filesize 4 --json -q hit /src",
+      ),
     ).toMatchObject({
       stdout: `${JSON.stringify({
         type: "summary",
@@ -166,7 +176,9 @@ describe("rg file-size admission", () => {
       return read(path);
     };
     expect(
-      await new Bash({ fs }).exec("rg -z --max-filesize 4 hit /src"),
+      await new Bash({ fs }).exec(
+        "rg --no-line-number -z --max-filesize 4 hit /src",
+      ),
     ).toMatchObject({
       stdout: "/src/b:hit\n",
       stderr: "",

@@ -1361,13 +1361,16 @@ interface JsonMatch {
 async function* fileBatches(
   files: string[] | AsyncIterable<string>,
   size: number,
+  firstBatchSize = size,
 ): AsyncGenerator<string[]> {
   let batch: string[] = [];
+  let limit = firstBatchSize;
   for await (const file of files) {
     batch.push(file);
-    if (batch.length === size) {
+    if (batch.length === limit) {
       yield batch;
       batch = [];
+      limit = size;
     }
   }
   if (batch.length) yield batch;
@@ -1384,7 +1387,7 @@ async function* filterFileSizes(
     yield* files;
     return;
   }
-  for await (const batch of fileBatches(files, options.searchZip ? 2 : 50)) {
+  for await (const batch of fileBatches(files, options.searchZip ? 2 : 50, 1)) {
     const stats = await Promise.allSettled(
       batch.map((file) => ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file))),
     );
@@ -1436,9 +1439,12 @@ async function searchFiles(
   // Compressed files retain both the decompressed byte buffer and decoded
   // string while being searched. Keep their concurrency deliberately small.
   const batchSize = options.searchZip ? 2 : 50;
-  outer: for await (let batch of fileBatches(files, batchSize)) {
-    // A zero-byte write observes a closed downstream pipe even when the next
-    // file has no matches and would otherwise produce no write.
+  outer: for await (let batch of fileBatches(
+    files,
+    batchSize,
+    streamingOutput ? 1 : batchSize,
+  )) {
+    // Observe downstream closure even when the next file has no matches.
     if (streamingOutput) await streamingOutput.write(unsafeBytesFromLatin1(""));
     searchedFiles += batch.length;
     const ordinaryFiles = !options.searchZip && !options.preprocessor;

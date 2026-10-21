@@ -173,7 +173,10 @@ describe("nested execution in streaming pipelines", () => {
     expect(result.stderr).toBe("err");
     expect(result.exitCode).toBe(0);
   });
-  it("keeps an untrusted stage restricted while its sibling awaits in a trusted scope", async () => {
+  it.each([
+    "execute",
+    "result getter",
+  ])("keeps untrusted %s restricted while a sibling is trusted", async (phase) => {
     let release!: () => void;
     const paused = new Promise<void>((resolve) => {
       release = resolve;
@@ -195,13 +198,22 @@ describe("nested execution in streaming pipelines", () => {
       "restricted",
       async () => {
         await ready;
-        try {
-          const timer = setTimeout(() => {}, 0);
-          clearTimeout(timer);
-          return { stdout: "unexpected\n", stderr: "", exitCode: 0 };
-        } finally {
-          release();
-        }
+        const probe = () => {
+          try {
+            const timer = setTimeout(() => {}, 0);
+            clearTimeout(timer);
+            return "unexpected\n";
+          } finally {
+            release();
+          }
+        };
+        return {
+          get stdout() {
+            return probe();
+          },
+          stderr: phase === "execute" ? probe() : "",
+          exitCode: 0,
+        };
       },
       { streaming: true, trusted: false },
     );
