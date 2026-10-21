@@ -11,6 +11,8 @@ describe("boolean regex search", () => {
     ["^item$|^sku$", "im"],
     ["cust.*item", "s"],
     ["\\b(sku|item)\\b", "i"],
+    ["\\btoken\\b|item[-_ ]?code", "i"],
+    ["\\Btoken\\B|^item$", "im"],
     ["(Σ|k|s)+", "i"],
     ["a*", "g"],
     ["missing|", ""],
@@ -32,6 +34,13 @@ describe("boolean regex search", () => {
       "\ud800cust\udc00item",
       "xitemx",
       "unrelated",
+      "token",
+      "(TOKEN)",
+      "token_value",
+      "7token9",
+      "xtokeny",
+      "😀token😀",
+      "item-code",
     ]) {
       boolean.lastIndex = 4;
       captured.lastIndex = 0;
