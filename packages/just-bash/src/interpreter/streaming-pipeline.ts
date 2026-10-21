@@ -23,6 +23,8 @@ import {
   resolveCommand,
 } from "./command-resolution.js";
 import { ExecutionAbortedError, ExecutionLimitError } from "./errors.js";
+import { globPatternHasVarRef } from "./expansion/analysis.js";
+import { patternHasCommandSubstitution } from "./expansion/pattern-expansion.js";
 import { SHELL_BUILTINS } from "./helpers/shell-constants.js";
 import { beginIsolatedShellState } from "./state-transaction.js";
 import type { InterpreterContext, InterpreterState } from "./types.js";
@@ -33,6 +35,9 @@ const STAGE_DEPTH = "streaming pipeline stages";
 function isStaticPart(part: WordPart): boolean {
   return (
     part.type === "Literal" ||
+    (part.type === "Glob" &&
+      !globPatternHasVarRef(part.pattern) &&
+      !patternHasCommandSubstitution(part.pattern)) ||
     part.type === "SingleQuoted" ||
     part.type === "Escaped" ||
     (part.type === "DoubleQuoted" && part.parts.every(isStaticPart))
