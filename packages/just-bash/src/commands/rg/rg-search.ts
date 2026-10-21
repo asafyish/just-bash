@@ -550,6 +550,7 @@ async function discoverFiles(
     executionScope: ctx.executionScope,
     site: "rg",
   });
+  const admittedExplicitFiles = new Set<string>();
   let explicitFileCount = 0;
   let directoryCount = 0;
   for (const path of paths) {
@@ -560,6 +561,7 @@ async function discoverFiles(
       if (stat.isFile) {
         explicitFileCount++;
         if (options.maxFilesize <= 0 || stat.size <= options.maxFilesize) {
+          admittedExplicitFiles.add(path);
           sources.push(
             (async function* () {
               yield path;
@@ -588,8 +590,12 @@ async function discoverFiles(
       errors.append(`rg: ${path}: Unable to access path\n`);
     }
   }
+  const files = mergeFileSources(sources, options.sort === "path");
   return {
-    files: mergeFileSources(sources, options.sort === "path"),
+    files:
+      directoryCount > 0
+        ? filterFileSizes(ctx, files, options, errors, admittedExplicitFiles)
+        : files,
     singleExplicitFile:
       paths.length === 1 && explicitFileCount === 1 && directoryCount === 0,
     errors,
@@ -857,19 +863,7 @@ async function* walkDirectory(
         );
       } else if (isFile) {
         budget.visit(depth + 1);
-        // Check max filesize
-        if (options.maxFilesize > 0) {
-          try {
-            const fileStat = await ctx.fs.stat(entryAbsolutePath);
-            if (fileStat.size > options.maxFilesize) {
-              continue;
-            }
-          } catch (error) {
-            rethrowFatalExecutionError(error);
-            errors.append(`rg: ${entryRelativePath}: Unable to access path\n`);
-            continue;
-          }
-        }
+
         if (
           shouldIncludeFile(
             entryRelativePath,
@@ -1256,6 +1250,43 @@ async function* fileBatches(
     }
   }
   if (batch.length) yield batch;
+}
+
+/** Keep lazy metadata reads in the same bounded batches as file contents. */
+async function* filterFileSizes(
+  ctx: RuntimeCommandContext,
+  files: AsyncIterable<string>,
+  options: RgOptions,
+  errors: BoundedStringBuilder,
+  admittedExplicitFiles: ReadonlySet<string>,
+): AsyncGenerator<string> {
+  if (options.maxFilesize <= 0) {
+    yield* files;
+    return;
+  }
+  for await (const batch of fileBatches(files, options.searchZip ? 2 : 50, 1)) {
+    const stats = await Promise.allSettled(
+      batch.map((file) =>
+        admittedExplicitFiles.has(file)
+          ? undefined
+          : ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file)),
+      ),
+    );
+    for (const result of stats)
+      if (result.status === "rejected")
+        rethrowFatalExecutionError(result.reason);
+    for (const [index, result] of stats.entries()) {
+      if (result.status === "rejected") {
+        errors.append(`rg: ${batch[index]}: Unable to access path\n`);
+      }
+      if (
+        result.status === "fulfilled" &&
+        (result.value === undefined || result.value.size <= options.maxFilesize)
+      ) {
+        yield batch[index];
+      }
+    }
+  }
 }
 
 async function searchFiles(
