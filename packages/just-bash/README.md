@@ -88,9 +88,10 @@ ends its producer: later writes fail with a broken pipe, reported as status 141
 in `PIPESTATUS` and under `pipefail`, matching bash. Plain `cat` and `head`
 stream standard input, and `seq` streams unless `-w` is used. Other registered
 commands can participate through a bounded buffering adapter. Pipelines with
-builtins, functions, redirections, `|&`, or `lastpipe` keep the buffered
-executor, as do pipelines that would exceed 64 active streaming stages across
-nested executions. `Bash.exec()` still returns a complete result bounded by
+builtins, functions, `|&`, or `lastpipe` keep the buffered executor. Redirections
+also keep the buffered executor except for static stderr targets on a single stage (`2>`, `2>>`,
+and `2>|`). Pipelines that would exceed 64 active streaming stages across
+nested executions remain buffered. `Bash.exec()` still returns a complete result bounded by
 `maxOutputSize`.
 
 Custom commands opt in with `defineCommand(name, execute, { streaming: true })`
