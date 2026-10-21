@@ -64,6 +64,7 @@ export async function executeStreamingPipeline(
     stdin: string,
     stdio: CommandStdio | undefined,
     resolved: Extract<ResolveCommandResult, { cmd: unknown }> | undefined,
+    stdinOwned: boolean,
   ) => Promise<ExecResult>,
 ): Promise<StreamingPipelineResult | undefined> {
   if (
@@ -162,7 +163,7 @@ export async function executeStreamingPipeline(
   const abort = new AbortController();
   const combined = combineAbortSignals(ctx.state.signal, abort.signal);
   const pipes = stages.slice(1).map(() => new BytePipe(ctx.executionScope));
-  const output = new ExecutionOutputAccumulator(ctx.executionScope, "pipeline");
+  const output = new ExecutionOutputAccumulator(ctx.executionScope, "pipeline", "bytes");
   let cancelled = false;
   const cancel = (error: unknown) => {
     if (cancelled) return;
@@ -225,7 +226,7 @@ export async function executeStreamingPipeline(
         const stdio: CommandStdio = {
           hasInput: input !== undefined,
           read: async () => {
-            const chunk = input ? await input.read() : null;
+            const chunk = input ? await input.read(Math.max(1, ctx.limits.maxInputBytes - inputBytes)) : null;
             if (chunk !== null) {
               inputBytes += latin1FromBytes(chunk).length;
               if (inputBytes > ctx.limits.maxInputBytes) {
@@ -276,6 +277,7 @@ export async function executeStreamingPipeline(
               stdin,
               stage.streaming ? stdio : undefined,
               stage.resolved,
+              input !== undefined,
             );
           } catch (error) {
             // A pipeline stage exits its subshell, not the enclosing script.

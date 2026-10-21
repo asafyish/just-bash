@@ -10,6 +10,19 @@ function stdio(ctx: RuntimeCommandContext) {
 }
 
 describe("streaming pipelines", () => {
+  it("emits cat file operands before consuming piped stdin", async () => {
+    const bash = new Bash({
+      files: { "/prefix": "prefix\n" },
+      executionLimits: { maxInputBytes: 256 * 1024 },
+    });
+    const result = await bash.exec(
+      "seq 1000000000 | cat /prefix - | head -n 1",
+    );
+    expect(result.stdout).toBe("prefix\n");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("stops an unfinished producer when head has enough input", async () => {
     let produced = 0;
     let finished = false;

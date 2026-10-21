@@ -12,7 +12,9 @@ describe("BytePipe", () => {
     await pipe.write(unsafeBytesFromLatin1("cd"));
     expect(scope.remainingLiveBytes).toBe(0);
     pipe.end();
-    expect(await pipe.read()).toBe(unsafeBytesFromLatin1("abcd"));
+    expect(await pipe.read(2)).toBe(unsafeBytesFromLatin1("ab"));
+    expect(scope.remainingLiveBytes).toBe(2);
+    expect(await pipe.read()).toBe(unsafeBytesFromLatin1("cd"));
     expect(await pipe.read()).toBeNull();
     expect(scope.remainingLiveBytes).toBe(4);
   });

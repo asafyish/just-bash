@@ -547,7 +547,7 @@ export class Interpreter {
         executeStreamingPipeline(
           this.ctx,
           node,
-          async (command, state, stdin, stdio, resolved) => {
+          async (command, state, stdin, stdio, resolved, stdinOwned) => {
             // @banned-pattern-ignore: pipeline stages reuse the parent executionScope and isolate only shell state.
             const interpreter = new Interpreter(this.options, state);
             interpreter.ctx.execFn = async (
@@ -591,7 +591,7 @@ export class Interpreter {
               name: name?.type === "Literal" ? name.value : "",
               resolved,
             };
-            return interpreter.executeCommand(command, stdin);
+            return interpreter.executeCommand(command, stdin, stdinOwned);
           },
         ),
     );
