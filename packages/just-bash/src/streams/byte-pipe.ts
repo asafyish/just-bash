@@ -65,7 +65,7 @@ export class BytePipe {
     }
   }
 
-  async read(): Promise<ByteString | null> {
+  async read(maxBytes: number = this.capacity): Promise<ByteString | null> {
     if (this.reading) throw new Error("Pipe reads must be awaited");
     this.reading = true;
     try {
@@ -75,11 +75,14 @@ export class BytePipe {
         });
       }
       if (this.failed) throw this.failure;
+      const length = Math.min(this.buffer.length, maxBytes);
       const chunk =
-        this.buffer.length > 0 ? unsafeBytesFromLatin1(this.buffer) : null;
-      this.buffer = "";
+        length > 0 ? unsafeBytesFromLatin1(this.buffer.slice(0, length)) : null;
+      this.buffer = this.buffer.slice(length);
       this.lease?.release();
-      this.lease = undefined;
+      this.lease = this.buffer.length
+        ? this.scope.reserveBytes("pipeline", this.buffer.length, "pipeline")
+        : undefined;
       this.wakeWriter?.();
       this.wakeWriter = undefined;
       return chunk;

@@ -190,7 +190,11 @@ export async function executeStreamingPipeline(
         };
         const stdio: CommandStdio = {
           read: async () => {
-            const chunk = input ? await input.read() : null;
+            const chunk = input
+              ? await input.read(
+                  Math.max(1, ctx.limits.maxInputBytes - inputBytes),
+                )
+              : null;
             if (chunk !== null) {
               inputBytes += latin1FromBytes(chunk).length;
               if (inputBytes > ctx.limits.maxInputBytes) {

@@ -7,6 +7,15 @@ import { readCommandStdin } from "../streams/command-stdio.js";
 import { ExecutionLimitError } from "./errors.js";
 
 describe("streaming pipeline input reservations", () => {
+  it("does not read beyond the input allowance before head selects its prefix", async () => {
+    const result = await new Bash({
+      executionLimits: { maxInputBytes: 10 },
+    }).exec("seq 100 | head -c 1");
+    expect(result.stdout).toBe("1");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("preserves UTF-8 output before a fatal streaming error", async () => {
     const fail = defineCommand(
       "fail",
