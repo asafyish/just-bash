@@ -14,6 +14,9 @@ export async function getCandidates(
     !fs.searchCandidates ||
     !preFilter ||
     preFilter.ignoreCase ||
+    preFilter.needles.length > 50 ||
+    preFilter.needles.reduce((bytes, needle) => bytes + needle.length, 0) >
+      64 * 1024 ||
     preFilter.needles.some((needle) => /[^\x00-\x7f]/.test(needle)) ||
     !paths.length
   ) {
