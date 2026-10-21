@@ -606,17 +606,22 @@ async function discoverFiles(
       } else if (stat.isDirectory) {
         directoryCount++;
         sources.push(
-          walkDirectory(
+          filterFileSizes(
             ctx,
-            path,
-            fullPath,
-            0,
+            walkDirectory(
+              ctx,
+              path,
+              fullPath,
+              0,
+              options,
+              gitignore,
+              typeRegistry,
+              errors,
+              traversalBudget,
+              new Set(),
+            ),
             options,
-            gitignore,
-            typeRegistry,
             errors,
-            traversalBudget,
-            new Set(),
           ),
         );
       }
@@ -894,19 +899,6 @@ async function* walkDirectory(
         );
       } else if (isFile) {
         budget.visit(depth + 1);
-        // Check max filesize
-        if (options.maxFilesize > 0) {
-          try {
-            const fileStat = await ctx.fs.stat(entryAbsolutePath);
-            if (fileStat.size > options.maxFilesize) {
-              continue;
-            }
-          } catch (error) {
-            rethrowFatalExecutionError(error);
-            errors.append(`rg: ${entryRelativePath}: Unable to access path\n`);
-            continue;
-          }
-        }
         if (
           shouldIncludeFile(
             entryRelativePath,
@@ -1382,6 +1374,34 @@ async function* fileBatches(
     }
   }
   if (batch.length) yield batch;
+}
+
+/** Keep lazy metadata reads in the same bounded batches as file contents. */
+async function* filterFileSizes(
+  ctx: RuntimeCommandContext,
+  files: AsyncIterable<string>,
+  options: RgOptions,
+  errors: BoundedStringBuilder,
+): AsyncGenerator<string> {
+  if (options.maxFilesize <= 0) {
+    yield* files;
+    return;
+  }
+  for await (const batch of fileBatches(files, options.searchZip ? 2 : 50)) {
+    const stats = await Promise.allSettled(
+      batch.map((file) => ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file))),
+    );
+    for (const result of stats)
+      if (result.status === "rejected")
+        rethrowFatalExecutionError(result.reason);
+    for (const [index, result] of stats.entries()) {
+      if (result.status === "rejected") {
+        errors.append(`rg: ${batch[index]}: Unable to access path\n`);
+      } else if (result.value.size <= options.maxFilesize) {
+        yield batch[index];
+      }
+    }
+  }
 }
 
 async function searchFiles(

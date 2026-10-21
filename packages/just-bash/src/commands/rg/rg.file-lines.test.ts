@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("rg incremental file matching", () => {
+  beforeAll(async () => {
+    // These tight work budgets test an active consumer closing, not the time
+    // Vite takes to load head's lazy module in a shared test worker.
+    await new Bash().exec("head -n 0");
+  });
+
   it("does not match the rest of a file after head closes", async () => {
     const bash = new Bash({
       files: { "/in": "match\n".repeat(10000) },
