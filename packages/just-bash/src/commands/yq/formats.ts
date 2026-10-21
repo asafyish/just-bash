@@ -80,6 +80,8 @@ export interface FormatOptions {
   csvDelimiter: string;
   /** CSV has header row */
   csvHeader: boolean;
+  /** Infer CSV cell types (disable to retain identifiers as strings). */
+  csvAutoParse: boolean;
 }
 
 export const defaultFormatOptions: FormatOptions = {
@@ -93,6 +95,7 @@ export const defaultFormatOptions: FormatOptions = {
   xmlContentName: "+content",
   csvDelimiter: "",
   csvHeader: true,
+  csvAutoParse: true,
 };
 
 /**
@@ -142,11 +145,12 @@ function parseCsv(
   input: string,
   delimiter: string,
   hasHeader: boolean,
+  autoParse: boolean,
 ): unknown[] {
   const result = Papa.parse(input, {
     delimiter: delimiter || undefined, // undefined triggers auto-detection
     header: hasHeader,
-    dynamicTyping: true,
+    dynamicTyping: autoParse,
     skipEmptyLines: true,
   });
   return result.data;
@@ -213,7 +217,12 @@ export function parseInput(
     case "csv":
       // SECURITY: sanitizeParsedData converts to null-prototype objects at boundary.
       return sanitize(
-        parseCsv(trimmed, options.csvDelimiter, options.csvHeader),
+        parseCsv(
+          trimmed,
+          options.csvDelimiter,
+          options.csvHeader,
+          options.csvAutoParse,
+        ),
       );
 
     case "toml":
