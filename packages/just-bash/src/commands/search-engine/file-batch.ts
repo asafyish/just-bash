@@ -21,7 +21,11 @@ export async function getCandidates(
   // #626 represents alternatives as conjunctions. The remote API accepts an
   // OR, so flattening keeps a safe superset; the matcher checks the full pattern.
   const needles = preFilter.groups.flat();
-  if (needles.some((needle) => /[^\x00-\x7f]/.test(needle))) return undefined;
+  if (
+    needles.length > 50 ||
+    needles.reduce((bytes, needle) => bytes + needle.length, 0) > 64 * 1024 ||
+    needles.some((needle) => /[^\x00-\x7f]/.test(needle))
+  ) return undefined;
   signal?.throwIfAborted();
   const candidates = await fs.searchCandidates({
     paths,

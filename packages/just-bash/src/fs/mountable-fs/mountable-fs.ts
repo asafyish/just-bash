@@ -275,7 +275,15 @@ export class MountableFs implements IFileSystem {
     return results;
   }
 
-  async searchCandidates(
+  get searchCandidates(): IFileSystem["searchCandidates"] {
+    if (this.baseFs.searchCandidates) return this.searchMountedCandidates;
+    for (const filesystem of this.mounts.values()) {
+      if (filesystem.searchCandidates) return this.searchMountedCandidates;
+    }
+    return undefined;
+  }
+
+  private async searchMountedCandidates(
     request: SearchCandidatesRequest,
   ): Promise<readonly string[]> {
     const selected = new Set<number>();

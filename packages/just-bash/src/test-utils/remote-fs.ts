@@ -23,10 +23,10 @@ export function remoteFs(
   );
   const batches: string[][] = [];
   const searches: SearchCandidatesRequest[] = [];
-  const originalRead = fs.readFile.bind(fs);
-  fs.readFile = async (path, encoding) => {
+  const originalRead = fs.readFileBuffer.bind(fs);
+  fs.readFileBuffer = async (path) => {
     if (path === options.unreadable) throw new Error("EACCES");
-    return originalRead(path, encoding);
+    return originalRead(path);
   };
   fs.readMany = async (paths) => {
     batches.push([...paths]);

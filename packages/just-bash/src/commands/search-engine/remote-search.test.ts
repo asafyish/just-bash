@@ -129,16 +129,21 @@ describe("remote filesystem search", () => {
     expect(remote.batches).toEqual([]);
   });
 
-  it("retains per-file read errors among nonmatches", async () => {
+  it.each([
+    "grep -n",
+    "rg -sn",
+  ])("retains per-file read errors among nonmatches: %s", async (command) => {
     const remote = remoteFs(
       { "/a": "foo\n", "/b": "miss\n" },
       { unreadable: "/b" },
     );
-    const actual = await new Bash({ fs: remote.fs }).exec("grep -n foo /a /b");
+    const actual = await new Bash({ fs: remote.fs }).exec(
+      `${command} foo /a /b`,
+    );
     remote.fs.readMany = undefined;
     remote.fs.searchCandidates = undefined;
     const expected = await new Bash({ fs: remote.fs }).exec(
-      "grep -n foo /a /b",
+      `${command} foo /a /b`,
     );
     expect(actual.stdout).toBe(expected.stdout);
     expect(actual.stderr).toBe(expected.stderr);
@@ -219,9 +224,7 @@ describe("remote filesystem search", () => {
       executionLimits: { maxLiveBytes: 250 },
     }).exec("rg -sq foo /a /b; rg -sq foo /a /b");
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      "rg: /b: Unable to read file\nrg: /b: Unable to read file\n",
-    );
+    expect(result.stderr).toBe("rg: /b: Unable to read file\n".repeat(2));
     expect(result.exitCode).toBe(0);
     expect(remote.batches).toEqual([
       ["/a", "/b"],

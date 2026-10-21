@@ -5,6 +5,23 @@ import { remoteFs } from "../../test-utils/remote-fs.js";
 import { getCandidates } from "./file-batch.js";
 
 describe("search batch boundaries", () => {
+  it("declines oversized candidate filters without calling the backend", async () => {
+    const remote = remoteFs({ "/a": "foo" });
+    for (const needles of [Array(51).fill("foo"), ["x".repeat(65537)]]) {
+      expect(
+        await getCandidates(remote.fs, ["/a"], { groups: needles.map((needle) => [needle]), exact: needles, ignoreCase: false }),
+      ).toBeUndefined();
+    }
+    expect(remote.searches).toEqual([]);
+    expect(
+      await getCandidates(remote.fs, ["/a"], {
+        groups: [["foo"]],
+        exact: ["foo"],
+        ignoreCase: false,
+      }),
+    ).toEqual(new Set(["/a"]));
+  });
+
   it.each([
     "grep -n",
     "rg -sn",

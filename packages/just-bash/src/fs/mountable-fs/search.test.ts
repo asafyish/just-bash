@@ -45,6 +45,7 @@ describe("mounted search capabilities", () => {
     const remote = remoteFs({ "/a": "foo" });
     fs.mount("/remote", remote.fs);
     expect(fs.readMany).toBeDefined();
+    expect(fs.searchCandidates).toBeDefined();
     const result = await new Bash({
       fs,
       executionLimits: { maxLiveBytes: 70, maxInputBytes: 1000 },
@@ -54,6 +55,7 @@ describe("mounted search capabilities", () => {
     expect(result.exitCode).toBe(0);
     fs.unmount("/remote");
     expect(fs.readMany).toBeUndefined();
+    expect(fs.searchCandidates).toBeUndefined();
     expect(
       await new MountableFs({ base: remote.fs }).readMany?.(["/a"]),
     ).toEqual([
@@ -77,6 +79,8 @@ describe("mounted search capabilities", () => {
       "rejected",
       "fulfilled",
     ]);
-    expect(await fs.searchCandidates({ paths, anyOf: ["foo"] })).toEqual(paths);
+    expect(await fs.searchCandidates?.({ paths, anyOf: ["foo"] })).toEqual(
+      paths,
+    );
   });
 });
