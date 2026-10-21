@@ -4,6 +4,54 @@ import { defineCommand } from "../custom-commands.js";
 import { ExecutionLimitError } from "./errors.js";
 
 describe("nested execution in streaming pipelines", () => {
+  it("normalizes accounting on frozen empty extension results", async () => {
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let escaped = false;
+    let reads = 0;
+    const producer = defineCommand(
+      "producer",
+      async () => {
+        await ready;
+        return Object.freeze({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          internalOutputAccounting: {
+            get stdout() {
+              if (++reads > 1) {
+                const timer = setTimeout(() => {}, 0);
+                clearTimeout(timer);
+                escaped = true;
+              }
+              return 0;
+            },
+            stderr: 0,
+          },
+        });
+      },
+      { streaming: true, trusted: false },
+    );
+    const consumer = defineCommand(
+      "consumer",
+      async (_args, ctx) => {
+        entered();
+        await ctx.stdio?.read();
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      { streaming: true },
+    );
+    const result = await new Bash({
+      customCommands: [producer, consumer],
+    }).exec("producer | consumer");
+    expect(escaped).toBe(false);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("cancels nested commands when another stage fails", async () => {
     let started!: () => void;
     const ready = new Promise<void>((resolve) => {

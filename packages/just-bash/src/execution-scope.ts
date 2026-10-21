@@ -289,7 +289,6 @@ export class ExecutionScope {
       result.internalOutputAccounting = { stdout, stderr };
       return result;
     }
-    if (stdout === 0 && stderr === 0) return result;
     return {
       ...result,
       internalOutputAccounting: { stdout, stderr },
