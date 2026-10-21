@@ -107,14 +107,15 @@ const FUNCTION_MAP: Record<string, string | ((args: AstNode[]) => AstNode)> = {
   contains: (args) => makePipeFunc("contains", args),
   replace: (args) => makePipeFunc("gsub", args),
   substr: (args) => {
+    const start = makeNumber(args[1]);
     if (args.length === 2) {
-      return { type: "Slice", base: args[0], start: args[1] };
+      return { type: "Slice", base: args[0], start };
     }
     return {
       type: "Slice",
       base: args[0],
-      start: args[1],
-      end: makeBinaryOp("+", args[1], args[2]),
+      start,
+      end: makeBinaryOp("+", start, makeNumber(args[2])),
     };
   },
 
