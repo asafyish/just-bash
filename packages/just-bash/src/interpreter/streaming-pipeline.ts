@@ -1,5 +1,6 @@
 import { combineAbortSignals } from "../abort-signals.js";
 import type {
+  ForNode,
   PipelineNode,
   SimpleCommandNode,
   WordPart,
@@ -22,7 +23,12 @@ import {
   type ResolveCommandResult,
   resolveCommand,
 } from "./command-resolution.js";
-import { ExecutionAbortedError, ExecutionLimitError } from "./errors.js";
+import {
+  ErrexitError,
+  ExecutionAbortedError,
+  ExecutionLimitError,
+  ExitError,
+} from "./errors.js";
 import { SHELL_BUILTINS } from "./helpers/shell-constants.js";
 import { beginIsolatedShellState } from "./state-transaction.js";
 import type { InterpreterContext, InterpreterState } from "./types.js";
@@ -48,11 +54,11 @@ export async function executeStreamingPipeline(
   ctx: InterpreterContext,
   node: PipelineNode,
   execute: (
-    node: SimpleCommandNode,
+    node: SimpleCommandNode | ForNode,
     state: InterpreterState,
     stdin: string,
     stdio: CommandStdio | undefined,
-    resolved: Extract<ResolveCommandResult, { cmd: unknown }>,
+    resolved: Extract<ResolveCommandResult, { cmd: unknown }> | undefined,
     stdinOwned: boolean,
   ) => Promise<ExecResult>,
 ): Promise<StreamingPipelineResult | undefined> {
@@ -70,8 +76,20 @@ export async function executeStreamingPipeline(
   )
     return;
 
-  const candidates: Array<{ node: SimpleCommandNode; name: string }> = [];
+  const candidates: Array<{ node: SimpleCommandNode | ForNode; name: string }> =
+    [];
   for (const command of node.commands) {
+    if (
+      command.type === "For" &&
+      candidates.length === 0 &&
+      !command.redirections.length &&
+      command.words?.every((word) =>
+        word.parts.every((part) => isStaticPart(part) || part.type === "Glob"),
+      )
+    ) {
+      candidates.push({ node: command, name: "" });
+      continue;
+    }
     if (
       command.type !== "SimpleCommand" ||
       command.redirections.length ||
@@ -99,12 +117,21 @@ export async function executeStreamingPipeline(
     return;
 
   const stages: Array<{
-    node: SimpleCommandNode;
+    node: SimpleCommandNode | ForNode;
     streaming: boolean;
     extension: boolean;
-    resolved: Extract<ResolveCommandResult, { cmd: unknown }>;
+    resolved: Extract<ResolveCommandResult, { cmd: unknown }> | undefined;
   }> = [];
   for (const candidate of candidates) {
+    if (candidate.node.type === "For") {
+      stages.push({
+        node: candidate.node,
+        streaming: true,
+        extension: false,
+        resolved: undefined,
+      });
+      continue;
+    }
     const resolved = await resolveCommand(ctx, candidate.name);
     if (!resolved || !("cmd" in resolved)) return;
     stages.push({
@@ -237,14 +264,26 @@ export async function executeStreamingPipeline(
                 )
               : "";
           const outputCheckpoint = ctx.executionScope.outputBytesUsed;
-          const rawResult = await execute(
-            stage.node,
-            state,
-            stdin,
-            stage.streaming ? stdio : undefined,
-            stage.resolved,
-            input !== undefined,
-          );
+          let rawResult: ExecResult;
+          try {
+            rawResult = await execute(
+              stage.node,
+              state,
+              stdin,
+              stage.streaming ? stdio : undefined,
+              stage.resolved,
+              input !== undefined,
+            );
+          } catch (error) {
+            // A pipeline stage exits its subshell, not the enclosing script.
+            if (!(error instanceof ExitError || error instanceof ErrexitError))
+              throw error;
+            rawResult = {
+              stdout: error.stdout,
+              stderr: error.stderr,
+              exitCode: error.exitCode,
+            };
+          }
           const result = ctx.executionScope.accountResult(
             rawResult,
             "pipeline",

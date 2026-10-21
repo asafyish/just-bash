@@ -28,7 +28,10 @@ import {
   stdoutAsBytes,
 } from "../encoding.js";
 import { ExecutionOutputAccumulator } from "../execution-output.js";
-import type { ExecutionScope } from "../execution-scope.js";
+import {
+  type ExecutionScope,
+  relinquishPipelineOutput,
+} from "../execution-scope.js";
 import type { IFileSystem } from "../fs/interface.js";
 import { mapToRecord } from "../helpers/env.js";
 import type { ExecutionLimits } from "../limits.js";
@@ -38,6 +41,7 @@ import {
   DefenseInDepthBox,
   SecurityViolationError,
 } from "../security/defense-in-depth-box.js";
+import { _setTimeout } from "../timers.js";
 import type {
   CommandRegistry,
   ExecResult,
@@ -565,6 +569,22 @@ export class Interpreter {
                 combined.cleanup();
               }
             };
+            if (command.type === "For") {
+              if (!stdio) throw new Error("Streaming loop requires stdio");
+              let emitted = 0;
+              return executeFor(interpreter.ctx, command, async (result) => {
+                if ((++emitted & 63) === 0)
+                  await new Promise<void>((resolve) => _setTimeout(resolve, 0));
+                relinquishPipelineOutput(
+                  this.ctx.executionScope,
+                  result.internalOutputAccounting?.stdout ?? 0,
+                  "for pipeline",
+                );
+                await stdio.write(stdoutAsBytes(result));
+              });
+            }
+            if (!resolved)
+              throw new Error("Streaming command requires resolution");
             interpreter.ctx.stdio = stdio;
             const name = command.name?.parts[0];
             interpreter.ctx.pipelineCommand = {
