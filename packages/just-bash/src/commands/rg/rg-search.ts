@@ -320,7 +320,7 @@ export async function executeSearch(
       showByteOffset: options.byteOffset,
       replace:
         options.replace !== null ? convertReplacement(options.replace) : null,
-      passthru: options.passthru,
+      passthru: options.passthru && !options.quiet,
       multiline: options.multiline,
       kResetGroup,
       maxWork: ctx.limits.maxLoopIterations,
@@ -1197,7 +1197,7 @@ async function searchFiles(
               options.replace !== null
                 ? convertReplacement(options.replace)
                 : null,
-            passthru: options.passthru,
+            passthru: options.passthru && !options.quiet,
             multiline: options.multiline,
             kResetGroup,
             maxWork: ctx.limits.maxLoopIterations,

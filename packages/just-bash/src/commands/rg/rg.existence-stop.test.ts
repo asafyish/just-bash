@@ -19,6 +19,7 @@ describe("rg existence-only searches", () => {
   it.each([
     ["-l", "/input\n", 0],
     ["-q", "", 0],
+    ["-q --passthru", "", 0],
     ["--files-without-match", "", 1],
     ["-vl", "/input\n", 0],
   ])("stops matching after the answer is known for %s", async (flags, stdout, exitCode) => {
@@ -31,6 +32,13 @@ describe("rg existence-only searches", () => {
       stderr: "",
       exitCode,
     });
+    if (flags === "-q --passthru") {
+      expect(await bash.exec(`cat /input | rg ${flags} match`)).toMatchObject({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
   });
 
   it("still searches through the last line and handles no match", async () => {
