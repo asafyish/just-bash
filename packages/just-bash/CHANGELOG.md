@@ -1,5 +1,10 @@
 # just-bash
 
+## 3.6.0-yuz.16
+
+- Pin upstream run 2.1.10, including the asynchronous replay-history and guest-handle retention fixes, QuickJS WASI 3.6.3, and the synchronous bridge state recheck.
+- Retain all combined-fork changes from 3.6.0-yuz.15.
+
 ## 3.6.0-yuz.13
 
 - Upgrade RE2JS to 2.8.8 so Boolean searches with word boundaries and anchors can use its DFA matcher.
