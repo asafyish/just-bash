@@ -56,6 +56,10 @@ export function accountFileInput(
   bytes: number,
   site: string,
 ): void {
+  if (ctx.executionScope) {
+    ctx.executionScope.consumeInput(bytes, site);
+    return;
+  }
   if (
     !Number.isSafeInteger(bytes) ||
     bytes < 0 ||
@@ -66,7 +70,6 @@ export function accountFileInput(
       "string_length",
     );
   }
-  ctx.executionScope?.consumeInput(bytes, site);
 }
 
 /**
@@ -124,7 +127,8 @@ export async function readFiles(
         }
         try {
           const filePath = ctx.fs.resolvePath(ctx.cwd, file);
-          const size = inputLeases ? (await ctx.fs.stat(filePath)).size : 0;
+          const stat = inputLeases ? await ctx.fs.stat(filePath) : undefined;
+          const size = stat?.isFile ? stat.size : 0;
           if (inputLeases && ctx.executionScope) {
             // Reserve both the byte buffer and its decoded text until consumed.
             inputLeases.push(
@@ -138,13 +142,16 @@ export async function readFiles(
           const content = await readBytesFrom(ctx.fs, filePath);
           if (inputLeases) {
             const bytes = latin1FromBytes(content).length;
-            if (bytes > size) {
-              throw new ExecutionLimitError(
-                `${cmdName}: file grew while being read`,
-                "string_length",
+            accountFileInput(ctx, bytes, cmdName);
+            if (bytes > size && ctx.executionScope) {
+              inputLeases.push(
+                ctx.executionScope.reserveBytes(
+                  "file input",
+                  (bytes - size) * 2,
+                  cmdName,
+                ),
               );
             }
-            accountFileInput(ctx, bytes, cmdName);
           }
           return { filename: file, content, error: null as string | null };
         } catch (error) {
