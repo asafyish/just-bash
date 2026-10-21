@@ -49,4 +49,31 @@ describe("xan CSV cell identity", () => {
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
   });
+
+  it("excludes empty cells from aggregations while retaining zero", async () => {
+    const bash = new Bash({
+      files: { "/sparse.csv": "id,n\na,1\nb,\nc,3\nd,0\n" },
+    });
+    const result = await bash.exec(
+      "xan agg 'count() as rows, count(n) as present, sum(n) as total, mean(n) as average, min(n) as low, max(n) as high, median(n) as middle' /sparse.csv",
+    );
+    expect(result.stdout).toBe(
+      "rows,present,total,average,low,high,middle\n4,3,4,1.3333333333333333,0,3,1\n",
+    );
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it.each([
+    ["substr(text, start, size)", "bc"],
+    ["substr(text, start)", "bcdef"],
+  ])("uses numeric column arguments for %s", async (expression, part) => {
+    const bash = new Bash({
+      files: { "/text.csv": "text,start,size\nabcdef,1,2\n" },
+    });
+    const result = await bash.exec(`xan map '${expression} as part' /text.csv`);
+    expect(result.stdout).toBe(`text,start,size,part\nabcdef,1,2,${part}\n`);
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
 });
