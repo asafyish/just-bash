@@ -3,6 +3,26 @@ import { Bash } from "../../Bash.js";
 import { InMemoryFs } from "../../fs/in-memory-fs/in-memory-fs.js";
 
 describe("rg incremental discovery and stdin", () => {
+  it("charges traversal entries once when preparing sorted output", async () => {
+    const result = await new Bash({
+      files: { "/src/a": "", "/src/b": "", "/src/c": "" },
+      executionLimits: { maxTraversalWork: 8 },
+    }).exec("rg --files /src");
+    expect(result.stdout).toBe("/src/a\n/src/b\n/src/c\n");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("stops quiet files-without-match searches on a nonmatching file", async () => {
+    const bash = new Bash({ files: { "/a": "match\n", "/b": "other\n" } });
+    const result = await bash.exec(
+      "set -o pipefail; rg -q --files-without-match match /a /b | cat",
+    );
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   // Exceed the 64 KiB pipe even if the consumer is still loading.
   const directory = (i: number) =>
     `z${String(i).padStart(3, "0")}${"x".repeat(220)}`;

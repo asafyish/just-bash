@@ -437,7 +437,7 @@ export async function executeSearch(
   }
 
   // Collect files to search
-  const { files, singleExplicitFile, stderr } = await collectFiles(
+  const { files, singleExplicitFile, errors } = await collectFiles(
     ctx,
     paths,
     options,
@@ -446,7 +446,11 @@ export async function executeSearch(
   );
 
   if (files.length === 0) {
-    return { stdout: "", stderr, exitCode: stderr ? 2 : 1 };
+    return {
+      stdout: "",
+      stderr: errors.build(),
+      exitCode: errors.byteLength ? 2 : 1,
+    };
   }
 
   // Determine output settings
@@ -472,7 +476,7 @@ export async function executeSearch(
     options,
     showFilename,
     effectiveLineNumbers,
-    stderr,
+    errors,
     kResetGroup,
     preFilter,
   );
@@ -528,7 +532,7 @@ function buildSearchRegex(
 interface CollectFilesResult {
   files: string[];
   singleExplicitFile: boolean;
-  stderr: string;
+  errors: BoundedStringBuilder;
 }
 
 /**
@@ -561,7 +565,7 @@ async function collectFiles(
   return {
     files,
     singleExplicitFile: discovered.singleExplicitFile,
-    stderr: discovered.errors.build(),
+    errors: discovered.errors,
   };
 }
 
@@ -581,6 +585,7 @@ async function discoverFiles(
     Math.min(ctx.limits.maxOutputSize, ctx.limits.maxStringLength),
     "rg",
   );
+
   const traversalBudget = new FileTraversalBudget({
     limits: ctx.limits,
     signal: ctx.signal,
@@ -747,7 +752,7 @@ async function* walkDirectory(
       }
       const keys = new Map<string, string>();
       for (const entry of entries) {
-        budget.checkpoint();
+        budget.checkpoint(0);
         let isDirectory = "isDirectory" in entry && entry.isDirectory === true;
         if (
           entry.isFile === undefined ||
@@ -1411,7 +1416,7 @@ async function searchFiles(
   options: RgOptions,
   showFilename: boolean,
   effectiveLineNumbers: boolean,
-  collectedErrors: string | BoundedStringBuilder,
+  errors: BoundedStringBuilder,
   kResetGroup?: number,
   preFilter?: PreFilter,
 ): Promise<ExecResult> {
@@ -1421,14 +1426,6 @@ async function searchFiles(
   const streamingOutput =
     !options.json && !options.stats ? ctx.stdio : undefined;
   let anyMatch = false;
-  const errors =
-    typeof collectedErrors === "string"
-      ? new BoundedStringBuilder(
-          Math.min(ctx.limits.maxOutputSize, ctx.limits.maxStringLength),
-          "rg",
-        )
-      : collectedErrors;
-  if (typeof collectedErrors === "string") errors.append(collectedErrors);
 
   // JSON mode tracking
   const jsonMessages: string[] = [];
@@ -1591,7 +1588,7 @@ async function searchFiles(
           filesWithMatch++;
           totalMatches += result.matchCount;
 
-          if (options.quiet && !options.json) {
+          if (options.quiet && !options.json && !options.filesWithoutMatch) {
             // Quiet mode without JSON: exit early on first match
             break outer;
           }
@@ -1676,6 +1673,8 @@ async function searchFiles(
             stdout += result.output;
           }
         } else if (options.filesWithoutMatch) {
+          hasOutput = true;
+          if (options.quiet && !options.json) break outer;
           const sep = options.nullSeparator ? "\0" : "\n";
           stdout += `${file}${sep}`;
         } else if (

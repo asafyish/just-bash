@@ -130,11 +130,14 @@ describe("rg streaming pipelines", () => {
         "/src/z": "hit\n",
       },
     });
-    expect(await bash.exec("rg hit /src | cat")).toMatchObject({
-      stdout: "/src/a-/file:hit\n/src/a.txt:hit\n/src/a/file:hit\n/src/z:hit\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(await bash.exec("rg --no-line-number hit /src | cat")).toMatchObject(
+      {
+        stdout:
+          "/src/a-/file:hit\n/src/a.txt:hit\n/src/a/file:hit\n/src/z:hit\n",
+        stderr: "",
+        exitCode: 0,
+      },
+    );
   });
 
   it("reads piped data and stdin pattern files through a custom command wrapper", async () => {
@@ -147,7 +150,9 @@ describe("rg streaming pipelines", () => {
       { streaming: true },
     );
     const bash = new Bash({ files, customCommands: [rg] });
-    expect(await bash.exec("seq 3 | rg 2 | cat")).toMatchObject({
+    expect(
+      await bash.exec("seq 3 | rg --no-line-number 2 | cat"),
+    ).toMatchObject({
       stdout: "2\n",
       stderr: "",
       exitCode: 0,
