@@ -25,7 +25,9 @@ describe("rg file-size admission", () => {
       }
       return stat(path);
     };
-    const result = await new Bash({ fs }).exec("rg -l שלום /src");
+    const result = await new Bash({ fs }).exec(
+      "rg --no-line-number -l שלום /src",
+    );
     expect(result).toMatchObject({
       stdout: `${Object.keys(files).join("\n")}\n`,
       stderr: "",
@@ -64,7 +66,9 @@ describe("rg file-size admission", () => {
       files: { "/src/a": "hit🙂\n", "/src/b": "hit\n" },
     });
     expect(
-      await bash.exec("rg --sort path --max-filesize 4 hit /src /src/b"),
+      await bash.exec(
+        "rg --no-line-number --sort path --max-filesize 4 hit /src /src/b",
+      ),
     ).toMatchObject({
       stdout: "/src/b:hit\n/src/b:hit\n",
       stderr: "",
@@ -81,6 +85,26 @@ describe("rg file-size admission", () => {
       await bash.exec("rg --no-line-number --max-filesize 0 -l hit /src"),
     ).toMatchObject({
       stdout: "/src/a\n/src/b\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("retains an admitted explicit file if a redundant metadata read would fail", async () => {
+    const fs = new InMemoryFs({ "/src/a": "hit\n", "/explicit": "hit\n" });
+    const stat = fs.stat.bind(fs);
+    let admitted = false;
+    fs.stat = async (path) => {
+      if (path === "/explicit") {
+        if (admitted) throw new Error("metadata temporarily unavailable");
+        admitted = true;
+      }
+      return stat(path);
+    };
+    expect(
+      await new Bash({ fs }).exec("rg --files --max-filesize 4 /src /explicit"),
+    ).toMatchObject({
+      stdout: "/explicit\n/src/a\n",
       stderr: "",
       exitCode: 0,
     });
@@ -198,7 +222,9 @@ describe("rg file-size admission", () => {
       executionLimits: { maxTraversalEntries: 80 },
     });
     expect(
-      await bash.exec("rg --sort path needle /a /b | head -n 1"),
+      await bash.exec(
+        "rg --no-line-number --sort path needle /a /b | head -n 1",
+      ),
     ).toMatchObject({
       stdout: "/a/f000:needle\n",
       stderr: "",

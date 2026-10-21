@@ -592,6 +592,7 @@ async function discoverFiles(
     executionScope: ctx.executionScope,
     site: "rg",
   });
+  const admittedExplicitFiles = new Set<string>();
   let explicitFileCount = 0;
   let directoryCount = 0;
   for (const path of paths) {
@@ -602,6 +603,7 @@ async function discoverFiles(
       if (stat.isFile) {
         explicitFileCount++;
         if (options.maxFilesize <= 0 || stat.size <= options.maxFilesize) {
+          admittedExplicitFiles.add(path);
           sources.push(
             (async function* () {
               yield path;
@@ -633,7 +635,9 @@ async function discoverFiles(
   const files = mergeFileSources(sources, options.sort === "path");
   return {
     files:
-      directoryCount > 0 ? filterFileSizes(ctx, files, options, errors) : files,
+      directoryCount > 0
+        ? filterFileSizes(ctx, files, options, errors, admittedExplicitFiles)
+        : files,
     singleExplicitFile:
       paths.length === 1 && explicitFileCount === 1 && directoryCount === 0,
     errors,
@@ -901,6 +905,7 @@ async function* walkDirectory(
         );
       } else if (isFile) {
         budget.visit(depth + 1);
+
         if (
           shouldIncludeFile(
             entryRelativePath,
@@ -1387,6 +1392,7 @@ async function* filterFileSizes(
   files: AsyncIterable<string>,
   options: RgOptions,
   errors: BoundedStringBuilder,
+  admittedExplicitFiles: ReadonlySet<string>,
 ): AsyncGenerator<string> {
   if (options.maxFilesize <= 0) {
     yield* files;
@@ -1394,7 +1400,11 @@ async function* filterFileSizes(
   }
   for await (const batch of fileBatches(files, options.searchZip ? 2 : 50, 1)) {
     const stats = await Promise.allSettled(
-      batch.map((file) => ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file))),
+      batch.map((file) =>
+        admittedExplicitFiles.has(file)
+          ? undefined
+          : ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file)),
+      ),
     );
     for (const result of stats)
       if (result.status === "rejected")
@@ -1402,7 +1412,11 @@ async function* filterFileSizes(
     for (const [index, result] of stats.entries()) {
       if (result.status === "rejected") {
         errors.append(`rg: ${batch[index]}: Unable to access path\n`);
-      } else if (result.value.size <= options.maxFilesize) {
+      }
+      if (
+        result.status === "fulfilled" &&
+        (result.value === undefined || result.value.size <= options.maxFilesize)
+      ) {
         yield batch[index];
       }
     }
