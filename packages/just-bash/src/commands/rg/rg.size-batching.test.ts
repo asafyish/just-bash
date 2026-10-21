@@ -174,4 +174,49 @@ describe("rg file-size admission", () => {
     });
     expect(reads).not.toContain("/src/a.gz");
   });
+
+  it("bounds sorted discovery across roots before an early pipe close", async () => {
+    const files: Record<string, string> = Object.create(null);
+    for (const root of ["a", "b"])
+      for (let i = 0; i < 100; i++)
+        files[`/${root}/f${String(i).padStart(3, "0")}`] = "needle\n";
+    files["/a/f000"] = "needle\n".repeat(10000);
+    const bash = new Bash({
+      files,
+      executionLimits: { maxTraversalEntries: 80 },
+    });
+    expect(
+      await bash.exec("rg --sort path needle /a /b | head -n 1"),
+    ).toMatchObject({
+      stdout: "/a/f000:needle\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("reports both directory and file access failures without losing readable files", async () => {
+    const fs = new InMemoryFs({
+      "/src/a": "hit\n",
+      "/src/blocked/hidden": "hit\n",
+      "/src/c": "hit\n",
+    });
+    const stat = fs.stat.bind(fs);
+    const readdir = fs.readdirWithFileTypes.bind(fs);
+    fs.stat = async (path) => {
+      if (path === "/src/a") throw new Error("unavailable");
+      return stat(path);
+    };
+    fs.readdirWithFileTypes = async (path) => {
+      if (path === "/src/blocked") throw new Error("unavailable");
+      return readdir(path);
+    };
+    const result = await new Bash({ fs }).exec("rg hit /src");
+    expect(result.stdout).toBe("/src/c:hit\n");
+    // Concurrent traversal and admission do not promise diagnostic ordering.
+    expect(result.stderr.trimEnd().split("\n").sort()).toEqual([
+      "rg: /src/a: Unable to access path",
+      "rg: /src/blocked: Unable to read directory",
+    ]);
+    expect(result.exitCode).toBe(2);
+  });
 });

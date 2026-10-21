@@ -606,22 +606,17 @@ async function discoverFiles(
       } else if (stat.isDirectory) {
         directoryCount++;
         sources.push(
-          filterFileSizes(
+          walkDirectory(
             ctx,
-            walkDirectory(
-              ctx,
-              path,
-              fullPath,
-              0,
-              options,
-              gitignore,
-              typeRegistry,
-              errors,
-              traversalBudget,
-              new Set(),
-            ),
+            path,
+            fullPath,
+            0,
             options,
+            gitignore,
+            typeRegistry,
             errors,
+            traversalBudget,
+            new Set(),
           ),
         );
       }
@@ -630,8 +625,10 @@ async function discoverFiles(
       errors.append(`rg: ${path}: Unable to access path\n`);
     }
   }
+  const files = mergeFileSources(sources, options.sort === "path");
   return {
-    files: mergeFileSources(sources, options.sort === "path"),
+    files:
+      directoryCount > 0 ? filterFileSizes(ctx, files, options, errors) : files,
     singleExplicitFile:
       paths.length === 1 && explicitFileCount === 1 && directoryCount === 0,
     errors,
