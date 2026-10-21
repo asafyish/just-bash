@@ -46,7 +46,8 @@
       "b.txt": "nothing selected\n"
     },
     "stdout": "(standard input):1:MATCH stdin\na.txt:2:MATCH café\na.txt:4:MATCH 二\n",
-    "stderr": "grep: (standard input): Bad file descriptor\n",
-    "exitCode": 0
+    "stderr": "",
+    "exitCode": 0,
+    "locked": true
   }
 }

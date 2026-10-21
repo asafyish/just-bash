@@ -26,6 +26,6 @@ describe("grep streaming - Real Bash Comparison", () => {
       "a.txt": "before\nMATCH café\nafter\nMATCH 二\n",
       "b.txt": "nothing selected\n",
     });
-    await compareOutputs(env, testDir, command);
+    await compareOutputs(env, testDir, command, { compareStderr: true });
   });
 });
