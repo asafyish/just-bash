@@ -1,15 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 import { InMemoryFs } from "../../fs/in-memory-fs/index.js";
+import { jqCommand } from "./jq.js";
 
 describe("jq per-input pipeline output", () => {
-  it("stops reading later batches when head closes", async () => {
+  it.each([
+    false,
+    true,
+  ])("stops reading later batches when head closes (direct registration: %s)", async (direct) => {
     const fs = new InMemoryFs(
       Object.fromEntries(
         Array.from({ length: 1000 }, (_, i) => [`/f${i}.json`, `{"id":${i}}`]),
       ),
     );
-    const bash = new Bash({ fs });
+    const bash = new Bash({ fs, customCommands: direct ? [jqCommand] : [] });
     await bash.exec("head -n 1 /f0.json");
     const reads = vi.spyOn(fs, "readFileBuffer");
     const result = await bash.exec(

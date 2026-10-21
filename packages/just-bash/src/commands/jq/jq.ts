@@ -276,6 +276,7 @@ const jqHelp = {
 
 export const jqCommand: RuntimeCommand = {
   name: "jq",
+  streaming: true,
 
   async execute(
     args: string[],
