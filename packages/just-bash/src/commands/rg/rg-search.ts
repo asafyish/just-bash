@@ -555,8 +555,9 @@ async function discoverFiles(
       // Path doesn't exist - skip silently.
     }
   }
+  const files = mergeFileSources(sources, options.sort === "path");
   return {
-    files: mergeFileSources(sources, options.sort === "path"),
+    files: directoryCount > 0 ? filterFileSizes(ctx, files, options) : files,
     singleExplicitFile: explicitFileCount === 1 && directoryCount === 0,
   };
 }
@@ -814,17 +815,6 @@ async function* walkDirectory(
         );
       } else if (isFile) {
         budget.visit(depth + 1);
-        // Check max filesize
-        if (options.maxFilesize > 0) {
-          try {
-            const fileStat = await ctx.fs.stat(entryAbsolutePath);
-            if (fileStat.size > options.maxFilesize) {
-              continue;
-            }
-          } catch {
-            continue;
-          }
-        }
         if (
           shouldIncludeFile(
             entryRelativePath,
@@ -1253,6 +1243,34 @@ async function* fileBatches(
     }
   }
   if (batch.length) yield batch;
+}
+
+/** Keep lazy metadata reads in the same bounded batches as file contents. */
+async function* filterFileSizes(
+  ctx: RuntimeCommandContext,
+  files: AsyncIterable<string>,
+  options: RgOptions,
+): AsyncGenerator<string> {
+  if (options.maxFilesize <= 0) {
+    yield* files;
+    return;
+  }
+  for await (const batch of fileBatches(files, options.searchZip ? 2 : 50, 1)) {
+    const stats = await Promise.allSettled(
+      batch.map((file) => ctx.fs.stat(ctx.fs.resolvePath(ctx.cwd, file))),
+    );
+    for (const result of stats)
+      if (result.status === "rejected")
+        rethrowFatalExecutionError(result.reason);
+    for (const [index, result] of stats.entries()) {
+      if (
+        result.status === "fulfilled" &&
+        result.value.size <= options.maxFilesize
+      ) {
+        yield batch[index];
+      }
+    }
+  }
 }
 
 async function searchFiles(
