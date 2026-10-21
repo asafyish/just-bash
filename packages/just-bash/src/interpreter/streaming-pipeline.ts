@@ -177,7 +177,11 @@ export async function executeStreamingPipeline(
   const abort = new AbortController();
   const combined = combineAbortSignals(ctx.state.signal, abort.signal);
   const pipes = stages.slice(1).map(() => new BytePipe(ctx.executionScope));
-  const output = new ExecutionOutputAccumulator(ctx.executionScope, "pipeline", "bytes");
+  const output = new ExecutionOutputAccumulator(
+    ctx.executionScope,
+    "pipeline",
+    "bytes",
+  );
   let cancelled = false;
   const cancel = (error: unknown) => {
     if (cancelled) return;
@@ -240,7 +244,11 @@ export async function executeStreamingPipeline(
         const stdio: CommandStdio = {
           hasInput: input !== undefined,
           read: async () => {
-            const chunk = input ? await input.read(Math.max(1, ctx.limits.maxInputBytes - inputBytes)) : null;
+            const chunk = input
+              ? await input.read(
+                  Math.max(1, ctx.limits.maxInputBytes - inputBytes),
+                )
+              : null;
             if (chunk !== null) {
               inputBytes += latin1FromBytes(chunk).length;
               if (inputBytes > ctx.limits.maxInputBytes) {

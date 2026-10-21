@@ -1,5 +1,12 @@
 # just-bash
 
+## 3.6.0-yuz.17
+
+- Merge the updated upstream PRs #507, #630, #631, #636, #638–#643, #650 and #654, including their review fixes and current-main integration.
+- Preserve ordered cat operands, bounded head input reads, UTF-8 failure output, streaming trust boundaries and stderr ordering.
+- Correct rg quiet-search/traversal accounting and explicit-file size admission; bound remote candidate filters and preserve jq file-input errors.
+- Retain all prior fork optimizations and the fork-only run 2.1.10 pin.
+
 ## 3.6.0-yuz.16
 
 - Pin upstream run 2.1.10, including the asynchronous replay-history and guest-handle retention fixes, QuickJS WASI 3.6.3, and the synchronous bridge state recheck.

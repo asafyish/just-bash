@@ -25,7 +25,8 @@ export async function getCandidates(
     needles.length > 50 ||
     needles.reduce((bytes, needle) => bytes + needle.length, 0) > 64 * 1024 ||
     needles.some((needle) => /[^\x00-\x7f]/.test(needle))
-  ) return undefined;
+  )
+    return undefined;
   signal?.throwIfAborted();
   const candidates = await fs.searchCandidates({
     paths,

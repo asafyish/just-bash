@@ -9,7 +9,11 @@ describe("search batch boundaries", () => {
     const remote = remoteFs({ "/a": "foo" });
     for (const needles of [Array(51).fill("foo"), ["x".repeat(65537)]]) {
       expect(
-        await getCandidates(remote.fs, ["/a"], { groups: needles.map((needle) => [needle]), exact: needles, ignoreCase: false }),
+        await getCandidates(remote.fs, ["/a"], {
+          groups: needles.map((needle) => [needle]),
+          exact: needles,
+          ignoreCase: false,
+        }),
       ).toBeUndefined();
     }
     expect(remote.searches).toEqual([]);

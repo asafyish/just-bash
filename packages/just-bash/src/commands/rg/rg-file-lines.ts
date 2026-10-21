@@ -36,7 +36,6 @@ export async function searchFileLines(
   const prefix = filename ? `${filename}:` : "";
   let matched = false;
   let lineNumber = 0;
-  let work = 0;
   let checkpoint = 256;
   let yieldAt = Date.now() + 8;
   let yielded = false;
@@ -45,8 +44,9 @@ export async function searchFileLines(
     const newline = content.indexOf("\n", start);
     const end = newline < 0 ? content.length : newline;
     const line = content.slice(start, end);
-    work += 1 + Math.ceil(line.length / 1024);
-    if (++lineNumber > maxArrayElements || work > maxLoopIterations) {
+    const work =
+      ++lineNumber + Math.ceil(Math.min(end + 1, content.length) / 1024);
+    if (lineNumber > maxArrayElements || work > maxLoopIterations) {
       throw new ExecutionLimitError(
         "rg: matching work limit exceeded",
         "iterations",
