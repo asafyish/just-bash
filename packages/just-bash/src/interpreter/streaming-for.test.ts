@@ -61,11 +61,14 @@ describe("for-loop pipeline producers", () => {
     }
   });
 
-  it("retains diagnostics when the consumer closes without reading", async () => {
+  it.each([
+    "echo err >&2; echo out",
+    "{ echo err >&2; echo out; break; }",
+    "{ echo err >&2; echo out; continue; }",
+    "{ echo err >&2; echo out; exit 7; }",
+  ])("retains diagnostics on a closed pipe: %s", async (body) => {
     expect(
-      await new Bash().exec(
-        "for i in a; do echo err >&2; echo out; done | head -n 0",
-      ),
+      await new Bash().exec(`for i in a; do ${body}; done | head -n 0`),
     ).toMatchObject({
       stdout: "",
       stderr: "err\n",

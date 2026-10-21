@@ -284,6 +284,18 @@ async function executeForBody(
           ctx.state.loopDepth,
         );
         output.replace(loopResult.stdout, loopResult.stderr);
+        if (emit) {
+          if (loopResult.action === "rethrow") throw loopResult.error;
+          try {
+            await emit(output.build(loopResult.exitCode ?? 0));
+          } catch (emitError) {
+            if (emitError instanceof BrokenPipeError) return output.build(141);
+            throw emitError;
+          }
+          output.replace("", output.stderr);
+          if (loopResult.error instanceof ControlFlowError)
+            loopResult.error.stdout = "";
+        }
         // `break`/`continue` are builtins that return 0, and they were the
         // last command this body ran - so they, not the command that failed
         // before them, set the loop's status. `$?` moves with it, or the next
