@@ -125,6 +125,7 @@ EXAMPLES:
     "    --xml-attribute-prefix=STR  XML attribute prefix (default: +@)",
     "    --xml-content-name=STR  XML text content name (default: +content)",
     "    --csv-delimiter=CHAR CSV delimiter (default: auto-detect)",
+    "    --csv-auto-parse=BOOL Infer CSV cell types (default: true)",
     "    --csv-header         CSV has header row (default: true)",
     "    --help               display this help and exit",
   ],
@@ -205,6 +206,11 @@ function parseArgs(args: string[]): ParsedArgs | ExecResult {
       options.xmlContentName = a.slice(19);
     } else if (a.startsWith("--csv-delimiter=")) {
       options.csvDelimiter = a.slice(16);
+    } else if (a.startsWith("--csv-auto-parse=")) {
+      const value = a.slice("--csv-auto-parse=".length);
+      if (!["true", "false", "t", "f"].includes(value))
+        return unknownOption("yq", a);
+      options.csvAutoParse = value === "true" || value === "t";
     } else if (a === "--csv-header") {
       options.csvHeader = true;
     } else if (a === "--no-csv-header") {
