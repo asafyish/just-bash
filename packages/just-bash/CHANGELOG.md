@@ -1,5 +1,10 @@
 # just-bash
 
+## 3.6.0-yuz.21
+
+- Merge upstream PR #636’s follow-up: reuse count-only matching for rg existence searches so discarded passthrough and match formatting cannot exhaust the matching budget.
+- Retain all fixes from 3.6.0-yuz.20 and run 2.1.10.
+
 ## 3.6.0-yuz.17
 
 - Merge the updated upstream PRs #507, #630, #631, #636, #638–#643, #650 and #654, including their review fixes and current-main integration.
