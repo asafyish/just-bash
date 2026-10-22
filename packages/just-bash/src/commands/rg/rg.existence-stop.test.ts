@@ -20,11 +20,17 @@ describe("rg existence-only searches", () => {
     ["-l", "/input\n", 0],
     ["-q", "", 0],
     ["-q --passthru", "", 0],
+    ["-l --passthru", "/input\n", 0],
+    ["--files-without-match --passthru", "", 1],
+    ["-q -o", "", 0],
+    ["-l -o", "/input\n", 0],
     ["--files-without-match", "", 1],
     ["-vl", "/input\n", 0],
   ])("stops matching after the answer is known for %s", async (flags, stdout, exitCode) => {
     const bash = new Bash({
-      files: { "/input": `first\n${"match\n".repeat(4000)}` },
+      files: {
+        "/input": `first\n${"match ".repeat(400)}\n${"match\n".repeat(4000)}`,
+      },
       executionLimits: { maxLoopIterations: 100 },
     });
     expect(await bash.exec(`rg ${flags} match /input`)).toMatchObject({
@@ -32,13 +38,11 @@ describe("rg existence-only searches", () => {
       stderr: "",
       exitCode,
     });
-    if (flags === "-q --passthru") {
-      expect(await bash.exec(`cat /input | rg ${flags} match`)).toMatchObject({
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-      });
-    }
+    expect(await bash.exec(`cat /input | rg ${flags} match`)).toMatchObject({
+      stdout: stdout ? "(standard input)\n" : "",
+      stderr: "",
+      exitCode,
+    });
   });
 
   it("still searches through the last line and handles no match", async () => {

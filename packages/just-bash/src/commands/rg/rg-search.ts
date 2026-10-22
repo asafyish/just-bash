@@ -282,6 +282,13 @@ export async function executeSearch(
     for (const lease of patternSourceLeases) lease.release();
   }
 
+  // Reuse count-only matching when only existence is needed, ignoring formatting.
+  const existenceOnly =
+    !options.json &&
+    !options.stats &&
+    (!options.multiline || !options.invertMatch) &&
+    (options.quiet || options.filesWithMatches || options.filesWithoutMatch);
+
   // If no paths are given and stdin was provided, search stdin (like real rg).
   // Pipeline stages and explicit redirections can provide an empty stdin, which
   // must still suppress rg's fallback recursive search of the current directory.
@@ -301,19 +308,13 @@ export async function executeSearch(
     const result = searchContent(content, regex, {
       invertMatch: options.invertMatch,
       showLineNumbers: options.lineNumber,
-      countOnly: options.count,
-      countMatches: options.countMatches,
+      countOnly: existenceOnly || options.count,
+      countMatches: !existenceOnly && options.countMatches,
       filename: "",
-      onlyMatching: options.onlyMatching,
+      onlyMatching: !existenceOnly && options.onlyMatching,
       beforeContext: options.beforeContext,
       afterContext: options.afterContext,
-      maxCount:
-        !options.json &&
-        !options.stats &&
-        (!options.multiline || !options.invertMatch) &&
-        (options.quiet || options.filesWithMatches || options.filesWithoutMatch)
-          ? 1
-          : options.maxCount,
+      maxCount: existenceOnly ? 1 : options.maxCount,
       contextSeparator: options.contextSeparator,
       showColumn: options.column,
       vimgrep: options.vimgrep,
@@ -1123,6 +1124,12 @@ async function searchFiles(
   collectedErrors: string,
   kResetGroup?: number,
 ): Promise<ExecResult> {
+  // Reuse count-only matching when only existence is needed, ignoring formatting.
+  const existenceOnly =
+    !options.json &&
+    !options.stats &&
+    (!options.multiline || !options.invertMatch) &&
+    (options.quiet || options.filesWithMatches || options.filesWithoutMatch);
   let stdout = "";
   let anyMatch = false;
   const errors = new BoundedStringBuilder(
@@ -1174,21 +1181,13 @@ async function searchFiles(
           const result = searchContent(content, regex, {
             invertMatch: options.invertMatch,
             showLineNumbers: effectiveLineNumbers,
-            countOnly: options.count,
-            countMatches: options.countMatches,
+            countOnly: existenceOnly || options.count,
+            countMatches: !existenceOnly && options.countMatches,
             filename: filenameForSearch,
-            onlyMatching: options.onlyMatching,
+            onlyMatching: !existenceOnly && options.onlyMatching,
             beforeContext: options.beforeContext,
             afterContext: options.afterContext,
-            maxCount:
-              !options.json &&
-              !options.stats &&
-              (!options.multiline || !options.invertMatch) &&
-              (options.quiet ||
-                options.filesWithMatches ||
-                options.filesWithoutMatch)
-                ? 1
-                : options.maxCount,
+            maxCount: existenceOnly ? 1 : options.maxCount,
             contextSeparator: options.contextSeparator,
             showColumn: options.column,
             vimgrep: options.vimgrep,
