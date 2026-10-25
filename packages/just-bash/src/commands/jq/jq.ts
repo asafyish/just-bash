@@ -162,6 +162,8 @@ function parseJsonStream(
 
       appendResult(
         sanitizeParsedData(parseJsonSlice(input, startPos, pos), {
+          // parseJsonSlice owns this fresh JSON graph; no other caller can observe it.
+          inPlace: true,
           maxDepth: limits.maxDepth,
           maxElements: limits.maxElements,
         }),
