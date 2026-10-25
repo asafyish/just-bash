@@ -167,6 +167,8 @@ export function safeHasOwn(obj: object, key: string): boolean {
  * the defense is null-prototype, not key filtering.
  */
 export interface SanitizeParsedDataLimits {
+  /** Reuse an exclusively owned parsed graph; other callers retain copying semantics. */
+  inPlace?: boolean;
   maxDepth?: number;
   maxElements?: number;
   /** Optional shared counter for aggregate accounting across documents. */
@@ -177,6 +179,7 @@ export function sanitizeParsedData(
   value: unknown,
   limits: SanitizeParsedDataLimits = {},
 ): unknown {
+  const inPlace = limits.inPlace === true;
   const maxDepth = limits.maxDepth ?? 2000;
   const maxElements = limits.maxElements ?? 1_000_000;
   const seen = new WeakMap<object, unknown>();
@@ -222,9 +225,14 @@ export function sanitizeParsedData(
       );
     }
 
-    const target: unknown[] | Record<string, unknown> = Array.isArray(current)
-      ? []
-      : Object.create(null);
+    const target: unknown[] | Record<string, unknown> = inPlace
+      ? Array.isArray(current)
+        ? current
+        : // @banned-pattern-ignore: hardens an exclusively owned parsed object to null; the prototype is never user-selected.
+          Object.setPrototypeOf(current, null)
+      : Array.isArray(current)
+        ? []
+        : Object.create(null);
     seen.set(current, target);
     pending.push({ source: current, target, depth });
     return target;
@@ -248,10 +256,11 @@ export function sanitizeParsedData(
           "array_elements",
         );
       }
-      target.length = source.length;
+      if (!inPlace) target.length = source.length;
       for (let index = source.length - 1; index >= 0; index--) {
         assertElement();
-        target[index] = createValue(source[index], depth + 1, pending);
+        const child = createValue(source[index], depth + 1, pending);
+        if (!inPlace) target[index] = child;
       }
       continue;
     }
@@ -270,7 +279,8 @@ export function sanitizeParsedData(
     for (let index = 0; index < keys.length; index++) {
       assertElement();
       const key = keys[index];
-      targetRecord[key] = createValue(sourceRecord[key], depth + 1, pending);
+      const child = createValue(sourceRecord[key], depth + 1, pending);
+      if (!inPlace) targetRecord[key] = child;
     }
   }
 
