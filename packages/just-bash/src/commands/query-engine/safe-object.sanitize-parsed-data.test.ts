@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
-import {
-  type SanitizeParsedDataLimits,
-  sanitizeParsedData,
-} from "./safe-object.js";
+import { sanitizeParsedData } from "./safe-object.js";
 
-describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
-  const sanitize = (value: unknown, limits: SanitizeParsedDataLimits = {}) =>
-    sanitizeParsedData(value, { ...limits, inPlace });
+describe("sanitizeParsedData", () => {
   it("converts nested parsed objects to null-prototype records", () => {
     const input = {
       a: 1,
@@ -16,7 +11,7 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
       list: [{ c: 3 }],
     };
 
-    const result = sanitize(input) as {
+    const result = sanitizeParsedData(input) as {
       a: number;
       nested: { b: number };
       list: Array<{ c: number }>;
@@ -27,10 +22,6 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
       nested: { b: 2 },
       list: [{ c: 3 }],
     });
-    expect(result === input).toBe(inPlace);
-    expect(Object.getPrototypeOf(input)).toBe(
-      inPlace ? null : Object.prototype,
-    );
     expect(Object.getPrototypeOf(result)).toBe(null);
     expect(Object.getPrototypeOf(result.nested)).toBe(null);
     expect(Object.getPrototypeOf(result.list[0])).toBe(null);
@@ -38,7 +29,7 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
 
   it("preserves Date instances", () => {
     const date = new Date("2026-01-01T00:00:00.000Z");
-    const result = sanitize({ when: date }) as { when: Date };
+    const result = sanitizeParsedData({ when: date }) as { when: Date };
     expect(result.when).toBe(date);
     expect(result.when instanceof Date).toBe(true);
   });
@@ -47,7 +38,7 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
     const loop: unknown[] = [];
     loop.push(loop);
 
-    const sanitized = sanitize(loop) as unknown[];
+    const sanitized = sanitizeParsedData(loop) as unknown[];
 
     expect(Array.isArray(sanitized)).toBe(true);
     expect(sanitized[0]).toBe(sanitized);
@@ -57,7 +48,7 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
     const shared = { value: 42 };
     const input = { left: shared, right: shared };
 
-    const result = sanitize(input) as {
+    const result = sanitizeParsedData(input) as {
       left: { value: number };
       right: { value: number };
     };
@@ -75,51 +66,77 @@ describe.each([false, true])("sanitizeParsedData (inPlace: %s)", (inPlace) => {
       cursor = child;
     }
 
-    expect(() => sanitize(root, { maxDepth: 19 })).toThrow(
+    expect(() => sanitizeParsedData(root, { maxDepth: 19 })).toThrow(
       "query depth limit exceeded (19)",
     );
-    expect(() => sanitize(root, { maxDepth: 20 })).not.toThrow();
+    expect(() => sanitizeParsedData(root, { maxDepth: 20 })).not.toThrow();
   });
 
   it("charges aggregate array and object members before cloning", () => {
-    expect(() => sanitize({ a: [1, 2, 3] }, { maxElements: 3 })).toThrow(
-      "query input element limit exceeded (3)",
-    );
-    expect(() => sanitize({ a: [1, 2, 3] }, { maxElements: 4 })).not.toThrow();
+    expect(() =>
+      sanitizeParsedData({ a: [1, 2, 3] }, { maxElements: 3 }),
+    ).toThrow("query input element limit exceeded (3)");
+    expect(() =>
+      sanitizeParsedData({ a: [1, 2, 3] }, { maxElements: 4 }),
+    ).not.toThrow();
   });
-  it("preserves dangerous own keys without changing Object.prototype", () => {
+});
+
+describe("fresh JSON trees", () => {
+  it("reuses owned arrays while hardening records and preserving dangerous own keys", () => {
     const original = Object.getOwnPropertyDescriptors(Object.prototype);
     const input = JSON.parse(
-      '{"__proto__":{"polluted":true},"constructor":{"name":"own"},"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}',
+      '{"rows":[{"__proto__":{"polluted":true},"constructor":2,"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}]}',
     );
-    const result = sanitize(input) as Record<string, unknown>;
+    const result = sanitizeParsedData(input, { jsonTree: true }) as {
+      rows: Array<Record<string, unknown>>;
+    };
+    expect(result).not.toBe(input);
+    expect(result.rows).toBe(input.rows);
     expect(Object.getPrototypeOf(result)).toBe(null);
-    expect(Object.keys(result)).toEqual([
-      "__proto__",
-      "constructor",
-      "prototype",
-      "hasOwnProperty",
-      "toString",
-      "valueOf",
-    ]);
-    expect(result).toEqual(
-      JSON.parse(
-        '{"__proto__":{"polluted":true},"constructor":{"name":"own"},"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}',
-      ),
+    expect(Object.getPrototypeOf(result.rows[0])).toBe(null);
+    expect(Object.getPrototypeOf(result.rows[0].__proto__)).toBe(null);
+    expect(JSON.stringify(result)).toBe(
+      '{"rows":[{"__proto__":{"polluted":true},"constructor":2,"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}]}',
     );
-    expect(Object.getPrototypeOf(result.__proto__)).toBe(null);
-    expect(Object.getPrototypeOf(result.constructor)).toBe(null);
     expect(Object.getOwnPropertyDescriptors(Object.prototype)).toEqual(
       original,
     );
   });
 
-  it("retains the shared element budget across documents", () => {
+  it.each([
+    false,
+    true,
+  ])("keeps depth and shared element bounds (jsonTree: %s)", (jsonTree) => {
+    expect(() =>
+      sanitizeParsedData(JSON.parse('{"a":[1,2,3]}'), {
+        maxElements: 3,
+        jsonTree,
+      }),
+    ).toThrow("query input element limit exceeded (3)");
+    expect(() =>
+      sanitizeParsedData(JSON.parse('{"a":[1,2,3]}'), {
+        maxElements: 4,
+        jsonTree,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      sanitizeParsedData(JSON.parse('{"a":{"b":[]}}'), {
+        maxDepth: 1,
+        jsonTree,
+      }),
+    ).toThrow("query depth limit exceeded (1)");
+    expect(() =>
+      sanitizeParsedData(JSON.parse('{"a":{"b":[]}}'), {
+        maxDepth: 2,
+        jsonTree,
+      }),
+    ).not.toThrow();
     const elementBudget = { used: 0 };
-    const limits = { maxElements: 2, elementBudget };
-    sanitize(JSON.parse('{"a":1}'), limits);
-    sanitize(JSON.parse("[2]"), limits);
-    expect(() => sanitize(JSON.parse('{"b":3}'), limits)).toThrow(
+    const limits = { maxElements: 2, elementBudget, jsonTree };
+    sanitizeParsedData(JSON.parse('{"a":1}'), limits);
+    sanitizeParsedData(JSON.parse("[2]"), limits);
+    expect(() => sanitizeParsedData(JSON.parse('{"b":3}'), limits)).toThrow(
       "query input element limit exceeded (2)",
     );
     expect(elementBudget.used).toBe(2);
