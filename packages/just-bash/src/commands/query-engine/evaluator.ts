@@ -1151,7 +1151,7 @@ function applyUpdate(
         if (path.name !== "getpath" || path.args.length !== 1) {
           throw new JqError(`Unsupported update path: ${path.name}`);
         }
-        for (const keys of evaluate(root, path.args[0], ctx)) {
+        for (const keys of evaluate(val, path.args[0], ctx)) {
           const target = validateBoundedPath(keys, ctx);
           const current = evaluate(
             val,
