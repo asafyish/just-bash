@@ -40,6 +40,19 @@ describe("jq reported regressions", () => {
     );
   });
 
+  it("evaluates dynamic getpath updates against the selected value", async () => {
+    const bash = new Bash();
+    expect(
+      await bash.exec(
+        `echo '{"key":"c","a":{"key":"b","b":1,"c":2}}' | jq -c '(.a | getpath([.key])) |= . + 1'`,
+      ),
+    ).toMatchObject({
+      stdout: '{"key":"c","a":{"key":"b","b":2,"c":2}}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("shares the remaining input stream with inputs, including under -n", async () => {
     const bash = new Bash({ files: { "/values": "1\n2\n", "/raw": "a\nb\n" } });
     const read = vi.spyOn(bash.fs, "readFileBytes");
