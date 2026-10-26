@@ -1,5 +1,10 @@
 # just-bash
 
+## 3.6.0-yuz.27
+
+- Merge upstream PR #680’s follow-up: reuse fresh JSON records in the existing sanitizer traversal, preserving limits and prototype hardening.
+- Retain all fixes from 3.6.0-yuz.26 and run 2.1.10.
+
 ## 3.6.0-yuz.26
 
 - Merge upstream PR #624’s dynamic getpath update fix: evaluate path arguments against the selected nested value.
