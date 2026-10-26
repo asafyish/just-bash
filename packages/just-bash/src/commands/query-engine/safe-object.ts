@@ -167,7 +167,7 @@ export function safeHasOwn(obj: object, key: string): boolean {
  * the defense is null-prototype, not key filtering.
  */
 export interface SanitizeParsedDataLimits {
-  /** Fresh JSON.parse trees have no aliases/cycles and exclusively own their arrays. */
+  /** Only for fresh JSON.parse trees: reuse containers; aliases/cycles are unsupported. */
   jsonTree?: boolean;
   maxDepth?: number;
   maxElements?: number;
@@ -224,11 +224,15 @@ export function sanitizeParsedData(
       );
     }
 
-    const target: unknown[] | Record<string, unknown> = Array.isArray(current)
-      ? limits.jsonTree
-        ? current
-        : []
-      : Object.create(null);
+    const target: unknown[] | Record<string, unknown> = limits.jsonTree
+      ? current
+      : Array.isArray(current)
+        ? []
+        : Object.create(null);
+    if (limits.jsonTree && !Array.isArray(current)) {
+      // @banned-pattern-ignore: exclusively owned JSON.parse record; own keys are unchanged
+      Object.setPrototypeOf(current, null);
+    }
     seen?.set(current, target);
     pending.push({ source: current, target, depth });
     return target;
