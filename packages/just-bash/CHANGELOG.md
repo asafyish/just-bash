@@ -1,5 +1,10 @@
 # just-bash
 
+## 3.6.0-yuz.26
+
+- Merge upstream PR #624’s dynamic getpath update fix: evaluate path arguments against the selected nested value.
+- Retain all fixes from 3.6.0-yuz.25.
+
 ## 3.6.0-yuz.21
 
 - Merge upstream PR #636’s follow-up: reuse count-only matching for rg existence searches so discarded passthrough and match formatting cannot exhaust the matching budget.
