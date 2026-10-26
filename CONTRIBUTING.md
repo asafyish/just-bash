@@ -120,6 +120,14 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 Repository maintenance covers dependencies, CI, tooling, and internal work that does not change how just-bash behaves for users. Maintainers triage it through the issue labels below.
 
+### Triage and scope
+
+Triage identifies the next useful action, not a commitment to implement a feature or merge a patch. Maintainers assess three separate questions: whether the problem and proposed approach belong in just-bash, how urgent the next action is, and who can advance it.
+
+The next action can be investigation, a scope decision, review, or verification of a reported fix. An upstream project, separate package, or downstream adapter can be the appropriate owner. A valid problem does not automatically justify the proposed architecture or integration.
+
+Broader scope changes need an explicit maintainer decision that records the supported boundary and non-goals, ownership, maintenance cost, and required validation. Preserve existing decisions within their agreed scope rather than treating every implementation detail as already approved or asking contributors to obtain the same agreement again.
+
 ### Issue labels
 
 Each issue form applies one type label automatically.
@@ -147,6 +155,34 @@ Topic labels group related issues, so it is easy to see which issues belong to t
 | `dependencies` | Dependency updates and dependency-related problems |
 | `ci` | Automated checks and GitHub Actions |
 
+### Priority
+
+Use at most one priority label on an issue or pull request. Priority describes the urgency of the next action, not acceptance, fix complexity, or a delivery date.
+
+| Label | Meaning |
+| --- | --- |
+| `p0` | Immediate action for demonstrated severe impact: a sandbox escape, disclosure across an intended isolation boundary, destructive data loss, or widespread supported-runtime failure without a practical workaround |
+| `p1` | Prompt action for substantial impact: silently wrong data, lost results, a host crash or hang, or a blocked supported platform, where a workaround or narrower affected path permits scheduled work |
+| `p2` | Normal backlog action for narrower correctness problems, diagnostics, capability decisions, and maintenance without demonstrated urgent impact |
+
+Record the affected version or platform, concrete impact, evidence gaps, and next action. Distinguish reporter claims, inspected code paths, and independently reproduced behavior. A security topic label or automated severity verdict alone does not establish `p0`.
+
+Missing priority means no priority has been assigned; it does not mean low impact or that the item has never been assessed. Do not assign `p2` automatically to every feature request. Labels do not promise response times.
+
+### Pull request next steps
+
+Use at most one of these labels on a non-draft PR. These labels identify the next step, not approval or merge readiness. Keep drafts as drafts rather than labeling them ready for review. These workflow labels do not apply to issues.
+
+| Label | Meaning |
+| --- | --- |
+| `awaiting-review` | Maintainer review or re-review is next |
+| `awaiting-author` | A specific outstanding request needs the author's response; link the request |
+| `blocked` | A named maintainer decision, dependency, or external prerequisite prevents the next step; record the blocker |
+
+Reassess the label after an author responds, including with evidence or disagreement. Return the PR to `awaiting-review` when maintainer evaluation is next. An old request-changes review, answered thread, or outdated automated finding does not establish outstanding author work. Maintainer-only actions, such as authorizing a fork's CI run, are not author tasks.
+
+Review status does not establish whether checks passed or a fix was released. Missing or cancelled checks are not passing.
+
 ### Closing issues
 
 Add one of these only when it applies:
@@ -155,6 +191,8 @@ Add one of these only when it applies:
 - `wontfix`: the change will not be made. Give a short reason.
 
 Close resolved issues as **Completed**, and link the fix or explain the resolution. Use **Not planned** when you close without pursuing a change.
+
+Before closing an issue as fixed, verify the originally reported behavior and identify the fixing change and affected release. Keep source fixes, published artifacts, and observable consumer behavior distinct: a merged PR alone does not establish resolution for users of a published version. If only part of a report is resolved, keep the remaining behavior tracked.
 
 ### Releases
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Bash } from "../../Bash.js";
 import { sanitizeParsedData } from "./safe-object.js";
 
 describe("sanitizeParsedData", () => {
@@ -83,16 +84,19 @@ describe("sanitizeParsedData", () => {
 });
 
 describe("fresh JSON trees", () => {
-  it("reuses owned arrays while hardening records and preserving dangerous own keys", () => {
+  it("reuses fresh JSON containers while preserving dangerous own keys", () => {
     const original = Object.getOwnPropertyDescriptors(Object.prototype);
     const input = JSON.parse(
       '{"rows":[{"__proto__":{"polluted":true},"constructor":2,"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}]}',
     );
+    const rows = input.rows;
+    const record = rows[0];
     const result = sanitizeParsedData(input, { jsonTree: true }) as {
       rows: Array<Record<string, unknown>>;
     };
-    expect(result).not.toBe(input);
-    expect(result.rows).toBe(input.rows);
+    expect(result).toBe(input);
+    expect(result.rows).toBe(rows);
+    expect(result.rows[0]).toBe(record);
     expect(Object.getPrototypeOf(result)).toBe(null);
     expect(Object.getPrototypeOf(result.rows[0])).toBe(null);
     expect(Object.getPrototypeOf(result.rows[0].__proto__)).toBe(null);
@@ -140,5 +144,17 @@ describe("fresh JSON trees", () => {
       "query input element limit exceeded (2)",
     );
     expect(elementBudget.used).toBe(2);
+  });
+
+  it("sanitizes fresh jq input under defense-in-depth", async () => {
+    const env = new Bash({
+      defenseInDepth: true,
+      files: { "/input.json": '{"__proto__":{"value":1},"constructor":2}' },
+    });
+    expect(await env.exec("jq -c . /input.json")).toMatchObject({
+      stdout: '{"__proto__":{"value":1},"constructor":2}\n',
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
