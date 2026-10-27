@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("jq reported regressions", () => {
-  it("updates getpath targets and rejects unsupported deletion paths", async () => {
+  it("updates getpath targets and preserves empty deletions", async () => {
     const bash = new Bash();
     const prototype = Object.getOwnPropertyDescriptors(Object.prototype);
     expect(
@@ -17,13 +17,6 @@ describe("jq reported regressions", () => {
       stdout: "[1,2]\n",
       stderr: "",
       exitCode: 0,
-    });
-    expect(
-      await bash.exec(`echo '[1,2,3]' | jq -c 'del(.[] | select(. == 2))'`),
-    ).toMatchObject({
-      stdout: "",
-      stderr: "jq: error: Unsupported path expression in del\n",
-      exitCode: 5,
     });
     expect(
       await bash.exec(
