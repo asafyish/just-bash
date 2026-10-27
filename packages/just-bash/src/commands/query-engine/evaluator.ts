@@ -121,6 +121,7 @@ export type ResolvedQueryExecutionLimits = Required<QueryExecutionLimits>;
 
 export interface EvalContext {
   vars: Map<string, QueryValue>;
+  inputFilename?: { readonly value: string | null };
   limits: ResolvedQueryExecutionLimits;
   env?: Map<string, string>;
   /** Named arguments (bare names) exposed via $ARGS.named */
@@ -236,6 +237,7 @@ function createContext(options?: EvaluateOptions): EvalContext {
       maxArrayElements: options?.limits?.maxArrayElements ?? 100_000,
     },
     env: options?.env,
+    inputFilename: options?.inputFilename,
     namedArgs: options?.namedArgs,
     positionalArgs: options?.positionalArgs,
     inputValues: options?.inputValues,
@@ -257,6 +259,7 @@ function withVar(
     vars: newVars,
     limits: ctx.limits,
     env: ctx.env,
+    inputFilename: ctx.inputFilename,
     namedArgs: ctx.namedArgs,
     positionalArgs: ctx.positionalArgs,
     inputValues: ctx.inputValues,
@@ -461,6 +464,8 @@ function applyPathTransform(
 }
 
 export interface EvaluateOptions {
+  /** Current source, shared with the command as it advances the input stream. */
+  inputFilename?: { readonly value: string | null };
   limits?: QueryExecutionLimits;
   env?: Map<string, string>;
   /** Named arguments (bare names) bound to $NAME and exposed via $ARGS.named */
@@ -1589,6 +1594,8 @@ function evalBuiltin(
   args: AstNode[],
   ctx: EvalContext,
 ): QueryValue[] {
+  if (name === "input_filename" && args.length === 0)
+    return [ctx.inputFilename?.value ?? null];
   // Handle simple single-argument math functions via lookup table
   const simpleMathFn = SIMPLE_MATH_FUNCTIONS.get(name);
   if (simpleMathFn) {
@@ -1755,6 +1762,7 @@ function evalBuiltin(
           "index/1",
           "indices/1",
           "infinite/0",
+          "input_filename/0",
           "inside/1",
           "inputs/0",
           "isempty/1",

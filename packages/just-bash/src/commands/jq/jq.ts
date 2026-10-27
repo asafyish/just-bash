@@ -512,7 +512,7 @@ export const jqCommand: RuntimeCommand = {
 
       async function* readInputs(
         readNull = false,
-      ): AsyncGenerator<{ content: string }> {
+      ): AsyncGenerator<{ source: string; content: string }> {
         if (nullInput && !readNull) return;
         const paths = files.length ? files : ["-"];
         for (let index = 0; index < paths.length; index += 50) {
@@ -546,7 +546,7 @@ export const jqCommand: RuntimeCommand = {
                       readCommandStdin(ctx),
                     )
                   : result.files[fileIndex++].content;
-              yield { content: decodeBytesToUtf8(content) };
+              yield { source: path === "-" ? "<stdin>" : path, content: decodeBytesToUtf8(content) };
             }
             if (result.exitCode !== 0) throw new JqInputError(result.stderr);
           } finally {
@@ -566,7 +566,9 @@ export const jqCommand: RuntimeCommand = {
       });
       let values: QueryValue[] = [];
 
+      const inputFilename: { value: string | null } = { value: null };
       const evalOptions: EvaluateOptions = {
+        inputFilename,
         limits: ctx.limits
           ? {
               maxIterations: ctx.limits.maxJqIterations,
@@ -660,32 +662,36 @@ export const jqCommand: RuntimeCommand = {
       };
       const inputStream = readInputs(usesInputs(ast));
       const consumeInputs = async (
-        visit: (content: string) => Promise<void>,
+        visit: (content: string, source: string) => Promise<void>,
       ): Promise<void> => {
         for (;;) {
           const input = await withDefenseContext("input iteration", () =>
             inputStream.next(),
           );
           if (input.done) return;
+          inputFilename.value = input.value.source;
           await withDefenseContext("input evaluation", () =>
-            visit(input.value.content),
+            visit(input.value.content, input.value.source),
           );
         }
       };
       if (usesInputs(ast)) {
-        const inputs: { content: string }[] = [];
+        const inputs: { source: string; content: string }[] = [];
         await withDefenseContext("input collection", () =>
-          consumeInputs(async (content) => {
-            inputs.push({ content });
+          consumeInputs(async (content, source) => {
+            inputs.push({ content, source });
           }),
         );
+        inputFilename.value = null;
         function* readInputValues(): Generator<QueryValue> {
           if (rawInput && slurp) {
+            inputFilename.value = inputs.at(-1)?.source ?? null;
             yield inputs.map(({ content }) => content).join("");
           } else if (rawInput) {
             // Preserve raw lines that span file boundaries.
             let remainder = "";
-            for (const { content } of inputs) {
+            for (const { source, content } of inputs) {
+              inputFilename.value = source;
               const text = remainder + content;
               let start = 0;
               let nl = text.indexOf("\n", start);
@@ -699,7 +705,8 @@ export const jqCommand: RuntimeCommand = {
             if (remainder !== "") yield remainder;
           } else {
             const items: QueryValue[] = [];
-            for (const { content } of inputs) {
+            for (const { source, content } of inputs) {
+              inputFilename.value = source;
               const trimmed = content.trim();
               if (!trimmed) continue;
               const parsed = parseJsonStream(trimmed, jsonLimits);
