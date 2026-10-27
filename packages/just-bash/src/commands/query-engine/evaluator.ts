@@ -1770,7 +1770,8 @@ function evalBuiltin(
   args: AstNode[],
   ctx: EvalContext,
 ): QueryValue[] {
-  if (name === "input_filename") return [ctx.inputFilename?.value ?? null];
+  if (name === "input_filename" && args.length === 0)
+    return [ctx.inputFilename?.value ?? null];
   // Handle simple single-argument math functions via lookup table
   const simpleMathFn = SIMPLE_MATH_FUNCTIONS.get(name);
   if (simpleMathFn) {

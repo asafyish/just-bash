@@ -3,6 +3,7 @@ import { Bash } from "../../Bash.js";
 
 describe("jq input_filename", () => {
   it.each([
+    ["jq -n 'def input_filename(x): x; input_filename(7)'", "7\n"],
     ["jq -r input_filename a.json b.json", "a.json\nb.json\n"],
     ["jq -r '. as $v | input_filename' a.json", "a.json\n"],
     ["jq -nr input_filename a.json", "null\n"],
