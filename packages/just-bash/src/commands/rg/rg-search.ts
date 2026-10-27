@@ -181,10 +181,8 @@ export async function executeSearch(
     }
   }
 
-  // In --files mode, positional args (including the pattern) are paths.
   if (options.files) {
-    const filesPaths = [...options.patterns, ...inputPaths];
-    return listFiles(ctx, filesPaths, options, typeRegistry);
+    return listFiles(ctx, inputPaths, options, typeRegistry);
   }
 
   if (options.patterns.length > ctx.limits.maxArrayElements) {
