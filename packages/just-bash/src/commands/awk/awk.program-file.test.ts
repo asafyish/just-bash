@@ -3,6 +3,18 @@ import { Bash } from "../../Bash.js";
 
 describe("awk program files", () => {
   it.each([
+    "-F",
+    "-v",
+  ])("rejects a missing %s argument with a program file", async (flag) => {
+    const bash = new Bash({ files: { "/p.awk": "BEGIN {print 7}" } });
+    expect(await bash.exec(`awk -f /p.awk ${flag}`)).toMatchObject({
+      stdout: "",
+      stderr: `awk: ${flag} requires an argument\n`,
+      exitCode: 1,
+    });
+  });
+
+  it.each([
     "-f /p.awk",
     "-f/p.awk",
   ])("executes %s with ordinary options and data operands", async (flag) => {
