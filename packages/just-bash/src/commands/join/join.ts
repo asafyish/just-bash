@@ -107,7 +107,8 @@ function formatOutputLine(
       const line = file === 0 ? (line1 ?? line2) : file === 1 ? line1 : line2;
       if (line && field === 0) {
         // 0 means the join field
-        parts.push(line.joinKey);
+        const joinField = line1 ? options.field1 : options.field2;
+        parts.push(line.fields[joinField - 1] ?? "");
       } else if (line && line.fields[field - 1] !== undefined) {
         parts.push(line.fields[field - 1]);
       } else {
