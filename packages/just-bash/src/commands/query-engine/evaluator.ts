@@ -1440,6 +1440,9 @@ function applyDel(
 
   function deleteAt(val: QueryValue, path: AstNode): QueryValue {
     switch (path.type) {
+      case "Paren":
+        return deleteAt(val, path.expr);
+
       case "Identity":
         return null;
 

@@ -13,6 +13,9 @@ describe("jq reported regressions", () => {
         `echo '{"a":[1,2]}' | jq -c '(getpath(["a"]) | getpath([-1])) += 3'`,
       ),
     ).toMatchObject({ stdout: '{"a":[1,5]}\n', stderr: "", exitCode: 0 });
+    expect(
+      await bash.exec(`echo '{"a":1,"b":2}' | jq -c 'del((.a))'`),
+    ).toMatchObject({ stdout: '{"b":2}\n', stderr: "", exitCode: 0 });
     expect(await bash.exec("echo '[1,2]' | jq -c 'del(empty)'")).toMatchObject({
       stdout: "[1,2]\n",
       stderr: "",
