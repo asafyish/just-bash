@@ -1,5 +1,11 @@
 # just-bash
 
+## 3.6.0-yuz.28
+
+- Preserve the yuz.27 lineage and its existing search, streaming, input-budget and JSON fixes.
+- Integrate focused upstream PRs #693 (empty rg paths), #695 (jq ISO date aliases), #697 (yq indent), #699 (jq ISO strptime) and #701 (jq filter files).
+- Hold input_filename PR #703: the fork's eager inputs helper needs source-correct iteration before safe integration.
+
 ## 3.6.0-yuz.27
 
 - Merge upstream PR #680’s follow-up: reuse fresh JSON records in the existing sanitizer traversal, preserving limits and prototype hardening.
