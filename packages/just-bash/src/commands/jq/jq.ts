@@ -546,7 +546,10 @@ export const jqCommand: RuntimeCommand = {
                       readCommandStdin(ctx),
                     )
                   : result.files[fileIndex++].content;
-              yield { source: path === "-" ? "<stdin>" : path, content: decodeBytesToUtf8(content) };
+              yield {
+                source: path === "-" ? "<stdin>" : path,
+                content: decodeBytesToUtf8(content),
+              };
             }
             if (result.exitCode !== 0) throw new JqInputError(result.stderr);
           } finally {

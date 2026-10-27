@@ -1,5 +1,11 @@
 # just-bash
 
+## 3.6.0-yuz.31
+
+- Merge review fixes from upstream PRs #624, #695, #703, #706, and #713: parenthesized deletion, builtin arities, missing AWK option values, and original join-key spelling.
+- Integrate #703 input filename tracking into the existing streaming reader.
+- Retain all fixes from 3.6.0-yuz.30 and run 2.1.10.
+
 ## 3.6.0-yuz.28
 
 - Preserve the yuz.27 lineage and its existing search, streaming, input-budget and JSON fixes.
