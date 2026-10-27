@@ -488,6 +488,10 @@ async function collectFiles(
 
   for (const path of paths) {
     traversalBudget.checkpoint();
+    if (path === "") {
+      errors.append("rg: : Unable to access path\n");
+      continue;
+    }
     const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
 
     try {
