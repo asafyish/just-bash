@@ -7,6 +7,9 @@ describe("jq deletion paths", () => {
     ["[0,1,2,3]", "del(.[0],.[2],.[0])", "[1,3]\n"],
     ["[0,1,2,3]", "del(.[0],.[-2])", "[1,3]\n"],
     ["[0,1]", "del(.[-4],.[8])", "[0,1]\n"],
+    ["[1,2,3]", "del(.[nan],.[1],.[1.5])", "[1,3]\n"],
+    ['[[1,2],{"a":1}]', "del(.[][0]?)", '[[2],{"a":1}]\n'],
+    ['{"0":1}', "del(.[0]?)", '{"0":1}\n'],
     ['{"a":{"b":1,"c":2},"d":3}', "del(.a,.a.b)", '{"d":3}\n'],
     [
       '{"a":null,"b":[null,1,null],"c":{"d":null,"e":2}}',
@@ -23,6 +26,14 @@ describe("jq deletion paths", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  it("rejects numeric object keys instead of deleting their string form", async () => {
+    const bash = new Bash({ files: { "/input.json": '{"0":1}' } });
+    const result = await bash.exec("jq 'del(.[0])' /input.json");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Cannot index object with number");
   });
 
   it("rejects value-producing expressions instead of deleting the root", async () => {

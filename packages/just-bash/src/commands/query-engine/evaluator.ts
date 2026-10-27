@@ -1339,8 +1339,12 @@ function applyDel(
     let parent = root;
     const normalized: (string | number)[] = [];
     let outsideArray = false;
-    for (const component of path) {
+    for (const rawComponent of path) {
       chargeQueryWork(ctx);
+      const component =
+        typeof rawComponent === "number"
+          ? Math.trunc(rawComponent)
+          : rawComponent;
       const key =
         Array.isArray(parent) && typeof component === "number" && component < 0
           ? parent.length + component
@@ -1348,7 +1352,7 @@ function applyDel(
       if (
         Array.isArray(parent) &&
         typeof key === "number" &&
-        (key < 0 || key >= parent.length)
+        (Number.isNaN(key) || key < 0 || key >= parent.length)
       ) {
         outsideArray = true;
         break;
@@ -1936,10 +1940,28 @@ function collectPaths(
       );
     }
     assertQueryResultCapacity(ctx, paths.length);
-    // Charge every copied entry before allocating the result path.
+    // Charge each path entry before validating and copying it.
     chargeQueryWork(ctx, length);
     const path = [...currentPath, ...suffix];
     if (key !== undefined) path.push(key);
+    let parent = value;
+    for (let i = currentPath.length; i < path.length; i++) {
+      const component = path[i];
+      if (
+        parent != null &&
+        (typeof component === "string"
+          ? typeof parent !== "object" || Array.isArray(parent)
+          : !Array.isArray(parent))
+      ) {
+        const type = Array.isArray(parent) ? "array" : typeof parent;
+        throw new Error(
+          `Cannot index ${type} with ${typeof component === "string" ? `string "${component}"` : "number"}`,
+        );
+      }
+      parent = getValueAtPath(parent, [
+        typeof component === "number" ? Math.trunc(component) : component,
+      ]);
+    }
     paths.push(path);
   };
   // Handle Comma - collect paths for both parts
@@ -1950,6 +1972,14 @@ function collectPaths(
     return;
   }
 
+  if (expr.type === "Optional") {
+    try {
+      collectPaths(value, expr.expr, ctx, currentPath, paths);
+    } catch (error) {
+      if (error instanceof ExecutionLimitError) throw error;
+    }
+    return;
+  }
   if (expr.type === "Paren") {
     collectPaths(value, expr.expr, ctx, currentPath, paths);
     return;
@@ -1979,35 +2009,20 @@ function collectPaths(
     return;
   }
 
-  // A computed key on a static base: the key reads the input, as when reading,
-  // and the base is still evaluated so its errors come out
+  // Keys read the original input; each base still contributes its own path.
   if (expr.type === "Index") {
-    const basePath = expr.base ? extractPathFromAst(expr.base) : [];
-    const keys = basePath ? evaluate(value, expr.index, ctx) : [];
+    const keys = evaluate(value, expr.index, ctx);
     if (
-      basePath &&
       keys.every(
         (key): key is string | number =>
           typeof key === "string" || typeof key === "number",
       )
     ) {
       if (keys.length === 0) return;
-      const bases = expr.base ? evaluate(value, expr.base, ctx) : [value];
+      const basePaths: (string | number)[][] = expr.base ? [] : [[]];
+      if (expr.base) collectPaths(value, expr.base, ctx, [], basePaths);
       for (const key of keys) {
-        for (const base of bases) {
-          chargeQueryWork(ctx);
-          // Missing paths are valid, but existing containers must support the key.
-          if (
-            base !== null &&
-            (typeof key === "string"
-              ? typeof base !== "object" || Array.isArray(base)
-              : !Array.isArray(base))
-          ) {
-            const type = Array.isArray(base) ? "array" : typeof base;
-            throw new Error(
-              `Cannot index ${type} with ${typeof key === "string" ? `string "${key}"` : "number"}`,
-            );
-          }
+        for (const basePath of basePaths) {
           appendPath(basePath, key);
         }
       }
