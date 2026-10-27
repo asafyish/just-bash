@@ -2,6 +2,17 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("jq ISO date builtin names", () => {
+  it("preserves user-defined ISO date functions with arguments", async () => {
+    const result = await new Bash().exec(
+      "jq -nc 'def fromdateiso8601(x): x; def todateiso8601(x): x; [fromdateiso8601(7), todateiso8601(8)]'",
+    );
+    expect(result).toMatchObject({
+      stdout: "[7,8]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("parses ISO dates with fromdateiso8601", async () => {
     const result = await new Bash().exec(
       `jq -n '"2026-05-03T22:28:02Z" | fromdateiso8601'`,
