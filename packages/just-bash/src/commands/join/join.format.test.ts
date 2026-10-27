@@ -2,6 +2,19 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("join output fields", () => {
+  it("preserves field-zero spelling with case-insensitive matching", async () => {
+    const bash = new Bash({
+      files: { "/a": "Apple 1\n", "/b": "apple 2\nBanana 3\n" },
+    });
+    expect(
+      await bash.exec("join -i -a 2 -e X -o '0,1.2,2.2' /a /b"),
+    ).toMatchObject({
+      stdout: "Apple 1 2\nBanana X 3\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it.each([
     "0,1.2,2.2",
     "0 1.2 2.2",
