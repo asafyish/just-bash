@@ -59,6 +59,12 @@ export function evalDateBuiltin(
   ctx: EvalContext,
   evaluate: EvalFn,
 ): QueryValue[] | null {
+  if (
+    (name === "fromdateiso8601" || name === "todateiso8601") &&
+    args.length !== 0
+  ) {
+    return null;
+  }
   switch (name) {
     case "now":
       return [Date.now() / 1000];
