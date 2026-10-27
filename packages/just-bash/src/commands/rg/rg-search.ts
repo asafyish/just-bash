@@ -449,7 +449,7 @@ export async function executeSearch(
   if (files.length === 0) {
     return {
       stdout: "",
-      stderr: errors.build(),
+      stderr: options.noMessages ? "" : errors.build(),
       exitCode: errors.byteLength ? 2 : 1,
     };
   }
@@ -1103,7 +1103,7 @@ async function listFiles(
   const stderr = errors.build();
   return {
     stdout: output.build(),
-    stderr,
+    stderr: options.noMessages ? "" : stderr,
     exitCode: stderr ? 2 : found ? 0 : 1,
   };
 }
@@ -1784,7 +1784,7 @@ async function searchFiles(
   // rg emits text; the pipeline handles encoding.
   return {
     stdout: finalStdout,
-    stderr,
+    stderr: options.noMessages ? "" : stderr,
     exitCode,
   };
 }
