@@ -5,9 +5,9 @@ describe("jq filter files", () => {
   it.each([
     "-r -f filter.jq",
     "-r --from-file filter.jq",
-    "-r --from-file=filter.jq",
     "-rf filter.jq",
-    "-rffilter.jq",
+    "-fr filter.jq",
+    "filter.jq -fr",
   ])("loads the filter through %s", async (options) => {
     const bash = new Bash({
       cwd: "/data",
@@ -39,12 +39,18 @@ describe("jq filter files", () => {
     expect(result.exitCode).toBe(2);
   });
 
-  it("requires a filename", async () => {
+  it("rejects an empty program like an inline empty filter", async () => {
+    const bash = new Bash({ files: { "/empty.jq": "" } });
+    const result = await bash.exec("jq -n -f /empty.jq");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).not.toBe(0);
+    expect(result).toMatchObject(await bash.exec("jq -n ''"));
+  });
+
+  it("reports a file error when no program operand is supplied", async () => {
     const result = await new Bash().exec("jq -f");
     expect(result.stdout).toBe("");
-    expect(result.stderr).toBe(
-      "jq: --from-file takes one parameter (a filename)\n",
-    );
+    expect(result.stderr).toBe("jq: .: No such file or directory\n");
     expect(result.exitCode).toBe(2);
   });
 });
