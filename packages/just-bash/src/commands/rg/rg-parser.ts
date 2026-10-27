@@ -546,6 +546,12 @@ const BOOL_FLAGS = new Map<string, BoolFlagHandler>([
     },
   ],
   [
+    "--no-heading",
+    (o) => {
+      o.heading = false;
+    },
+  ],
+  [
     "--passthru",
     (o) => {
       o.passthru = true;
