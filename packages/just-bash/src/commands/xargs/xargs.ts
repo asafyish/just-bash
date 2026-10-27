@@ -1,4 +1,8 @@
-import { decodeBytesToUtf8, latin1FromBytes } from "../../encoding.js";
+import {
+  decodeBytesToUtf8,
+  latin1FromBytes,
+  readBytesFrom,
+} from "../../encoding.js";
 import { ExecutionOutputAccumulator } from "../../execution-output.js";
 import type { ExecutionScope } from "../../execution-scope.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
@@ -9,6 +13,7 @@ import type {
   RuntimeCommand,
   RuntimeCommandContext,
 } from "../../types.js";
+import { accountFileInput } from "../../utils/file-reader.js";
 import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
 import { utf8ByteLength } from "../printf/escapes.js";
 
@@ -195,6 +200,8 @@ export const xargsCommand: RuntimeCommand = {
       }
     }
 
+    if (argFile === "-") argFile = null;
+
     // Get command and initial args
     const command = args.slice(commandStart);
     if (command.length === 0) {
@@ -210,10 +217,12 @@ export const xargsCommand: RuntimeCommand = {
       stdinText = decodeBytesToUtf8(ctx.stdin);
     } else {
       try {
-        stdinText = await ctx.fs.readFile(
+        const content = await readBytesFrom(
+          ctx.fs,
           ctx.fs.resolvePath(ctx.cwd, argFile),
-          "utf8",
         );
+        accountFileInput(ctx, latin1FromBytes(content).length, "xargs");
+        stdinText = decodeBytesToUtf8(content);
       } catch (error) {
         if (error instanceof ExecutionLimitError) throw error;
         return {

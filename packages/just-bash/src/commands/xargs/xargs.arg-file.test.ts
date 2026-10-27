@@ -39,6 +39,23 @@ describe("xargs argument files", () => {
       exitCode: 0,
     });
   });
+  it.each(["-a -", "--arg-file=-"])("reads stdin with %s", async (flag) => {
+    const result = await new Bash().exec(
+      `printf 'café\\n' | xargs ${flag} echo`,
+    );
+    expect(result).toMatchObject({ stdout: "café\n", stderr: "", exitCode: 0 });
+  });
+  it("charges repeated argument-file reads to the shared input budget", async () => {
+    const bash = new Bash({
+      files: { "/args": "café\n" },
+      executionLimits: { maxInputBytes: 10 },
+    });
+    const result = await bash.exec("xargs -a /args true; xargs -a /args true");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain(
+      "xargs: aggregate input size limit exceeded (10 bytes)",
+    );
+  });
   it("reports a missing argument file", async () => {
     const result = await new Bash().exec("xargs -a /missing echo");
     expect(result).toMatchObject({
