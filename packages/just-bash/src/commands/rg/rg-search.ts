@@ -598,6 +598,10 @@ async function discoverFiles(
   let directoryCount = 0;
   for (const path of paths) {
     traversalBudget.checkpoint();
+    if (path === "") {
+      errors.append("rg: : Unable to access path\n");
+      continue;
+    }
     const fullPath = ctx.fs.resolvePath(ctx.cwd, path);
     try {
       const stat = await ctx.fs.stat(fullPath);
