@@ -309,7 +309,7 @@ export const jqCommand: RuntimeCommand = {
     let useTab = false;
     let filter = ".";
     let filterSet = false;
-    let filterFile: string | undefined;
+    let fromFile = false;
     let positionalMode: "none" | "args" | "jsonargs" = "none";
     const files: string[] = [];
     const namedArgs = new Map<string, QueryValue>();
@@ -390,12 +390,8 @@ export const jqCommand: RuntimeCommand = {
         }
         fileBindings.push({ name, file, mode: "slurp" });
         i += 2;
-      } else if (a === "--from-file" || a.startsWith("--from-file=")) {
-        filterFile = a === "--from-file" ? args[++i] : a.slice(12);
-        if (filterFile === undefined) {
-          return jqArgError("--from-file takes one parameter (a filename)");
-        }
-        filterSet = true;
+      } else if (a === "-f" || a === "--from-file") {
+        fromFile = true;
       } else if (a === "--args") {
         // Remaining non-option tokens (after the filter) become string
         // positional args instead of input files.
@@ -424,12 +420,7 @@ export const jqCommand: RuntimeCommand = {
           } else if (c === "M") {
             /* ignored */
           } else if (c === "f") {
-            filterFile = a.slice(j + 1) || args[++i];
-            if (filterFile === undefined) {
-              return jqArgError("--from-file takes one parameter (a filename)");
-            }
-            filterSet = true;
-            break;
+            fromFile = true;
           } else return unknownOption("jq", `-${c}`);
         }
       } else if (!filterSet) {
@@ -458,9 +449,9 @@ export const jqCommand: RuntimeCommand = {
     const inputLeases: ResourceLease[] = [];
     let rawRemainderLease: ResourceLease | undefined;
     try {
-      if (filterFile !== undefined) {
+      if (fromFile) {
         const result = await withDefenseContext("filter file read", () =>
-          readFiles(ctx, [filterFile], {
+          readFiles(ctx, [filter], {
             cmdName: "jq",
             allowStdinMarker: false,
             stopOnError: true,
