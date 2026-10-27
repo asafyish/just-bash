@@ -84,6 +84,12 @@ export const awkCommand2: RuntimeCommand = {
         }
         programFiles.push(file);
         programIdx = i + 1;
+      } else if ((arg === "-F" || arg === "-v") && i + 1 >= args.length) {
+        return {
+          stdout: "",
+          stderr: `awk: ${arg} requires an argument\n`,
+          exitCode: 1,
+        };
       } else if (arg === "-F" && i + 1 < args.length) {
         fieldSepStr = processEscapes(args[++i]);
         fieldSep = createFieldSepRegex(fieldSepStr);
