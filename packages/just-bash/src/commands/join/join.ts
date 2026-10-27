@@ -152,17 +152,16 @@ function formatOutputLine(
 function parseOutputFormat(
   format: string,
 ): Array<{ file: number; field: number }> | null {
-  const parts = format.trim().split(/[, \t]+/);
+  const parts = format.split(/[, \t]/);
+  if (parts.length > 1 && parts.at(-1) === "") parts.pop();
   const result: Array<{ file: number; field: number }> = [];
-
-  if (/(?:^|,)\s*(?:,|$)/.test(format)) return null;
 
   for (const part of parts) {
     if (part === "0") {
       result.push({ file: 0, field: 0 });
       continue;
     }
-    const match = part.trim().match(/^(\d+)\.(\d+)$/);
+    const match = part.match(/^(\d+)\.(\d+)$/);
     if (!match) {
       return null;
     }

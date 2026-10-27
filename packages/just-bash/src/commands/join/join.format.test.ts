@@ -5,7 +5,7 @@ describe("join output fields", () => {
   it.each([
     "0,1.2,2.2",
     "0 1.2 2.2",
-    "0, 1.2 2.2",
+    "0,1.2 2.2",
   ])("formats matched and unpaired rows with %s", async (format) => {
     const bash = new Bash({
       cwd: "/work",
