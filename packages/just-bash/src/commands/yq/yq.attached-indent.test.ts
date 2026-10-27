@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("yq attached indent arguments", () => {
-  it.each(["-I=0", "-I0", "-I 0", "--indent=0"])("accepts %s", async (option) => {
+  it.each([
+    "-I=0",
+    "-I0",
+    "-I 0",
+    "--indent=0",
+  ])("accepts %s", async (option) => {
     const result = await new Bash().exec(
       `printf '{"value":7}' | yq -p json -o json ${option} '.'`,
     );
