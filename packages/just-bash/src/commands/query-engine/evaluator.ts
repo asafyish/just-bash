@@ -1370,7 +1370,7 @@ function applyDel(
 ): QueryValue {
   const selected: (string | number)[][] = [];
   collectPaths(root, pathExpr, ctx, [], selected);
-  const paths = new Map<string, (string | number)[]>();
+  const paths: (string | number)[][] = [];
   for (const path of selected) {
     let parent = root;
     const normalized: (string | number)[] = [];
@@ -1396,22 +1396,59 @@ function applyDel(
       normalized.push(key);
       parent = getValueAtPath(parent, [key]);
     }
-    if (!outsideArray) paths.set(JSON.stringify(normalized), normalized);
+    if (!outsideArray) paths.push(normalized);
   }
-  // Resolve against the original input; delete children and higher array indices first.
-  const ordered = [...paths.values()].sort((a, b) => {
-    for (let i = 0; i < Math.min(a.length, b.length); i++) {
-      if (a[i] === b[i]) continue;
-      const left = a[i];
-      const right = b[i];
-      return typeof left === "number" && typeof right === "number"
-        ? right - left
-        : String(right).localeCompare(String(left));
+  if (paths.some((path) => path.length === 0)) return null;
+  return deleteResolvedPaths(root, paths, 0, ctx);
+}
+
+// Group paths by their original container so each container is copied once.
+function deleteResolvedPaths(
+  value: QueryValue,
+  paths: (string | number)[][],
+  depth: number,
+  ctx: EvalContext,
+): QueryValue {
+  const array = Array.isArray(value) ? value : null;
+  const object = array ? null : asQueryRecord(value);
+  if (!array && !object) return value;
+  const groups = new Map<string | number, (string | number)[][] | null>();
+  for (const path of paths) {
+    chargeQueryWork(ctx);
+    const key = path[depth];
+    if (object && (typeof key !== "string" || !isSafeKey(key))) continue;
+    if (!Object.hasOwn(value as object, key)) continue;
+    const group = groups.get(key);
+    // Deleting a parent supersedes all deletions below it.
+    if (path.length === depth + 1) groups.set(key, null);
+    else if (group) group.push(path);
+    else if (group === undefined) groups.set(key, [path]);
+  }
+  if (groups.size === 0) return value;
+  if (array) {
+    chargeQueryWork(ctx, array.length);
+    const result: QueryValue[] = [];
+    for (let i = 0; i < array.length; i++) {
+      const group = groups.get(i);
+      if (group === null) continue;
+      result.push(
+        group ? deleteResolvedPaths(array[i], group, depth + 1, ctx) : array[i],
+      );
     }
-    return b.length - a.length;
-  });
-  let result = root;
-  for (const path of ordered) result = deletePath(result, path);
+    return result;
+  }
+  if (!object) return value;
+  chargeQueryWork(ctx, Object.keys(object).length);
+  const result = nullPrototypeCopy(object);
+  for (const [key, group] of groups) {
+    if (group === null) delete result[key];
+    else
+      safeSet(
+        result,
+        String(key),
+        deleteResolvedPaths(result[key], group, depth + 1, ctx),
+      );
+  }
   return result;
 }
 
