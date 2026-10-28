@@ -1,5 +1,8 @@
 import { sanitizeErrorMessage } from "../../fs/sanitize-error.js";
-import { getErrorMessage } from "../../interpreter/helpers/errors.js";
+import {
+  getErrorCode,
+  getErrorMessage,
+} from "../../interpreter/helpers/errors.js";
 import type {
   ExecResult,
   RuntimeCommand,
@@ -59,20 +62,18 @@ export const rmCommand: RuntimeCommand = {
           stdout += `removed '${path}'\n`;
         }
       } catch (error) {
-        if (!force) {
-          const message = getErrorMessage(error);
-          if (message.includes("ENOENT") || message.includes("no such file")) {
-            stderr += `rm: cannot remove '${path}': No such file or directory\n`;
-          } else if (
-            message.includes("ENOTEMPTY") ||
-            message.includes("not empty")
-          ) {
-            stderr += `rm: cannot remove '${path}': Directory not empty\n`;
-          } else {
-            stderr += `rm: cannot remove '${path}': ${sanitizeErrorMessage(message)}\n`;
-          }
-          exitCode = 1;
+        const code = getErrorCode(error);
+        if (force && code === "ENOENT") continue;
+
+        const message = getErrorMessage(error);
+        if (code === "ENOENT") {
+          stderr += `rm: cannot remove '${path}': No such file or directory\n`;
+        } else if (code === "ENOTEMPTY") {
+          stderr += `rm: cannot remove '${path}': Directory not empty\n`;
+        } else {
+          stderr += `rm: cannot remove '${path}': ${sanitizeErrorMessage(message)}\n`;
         }
+        exitCode = 1;
       }
     }
 
