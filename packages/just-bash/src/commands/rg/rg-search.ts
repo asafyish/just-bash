@@ -906,9 +906,9 @@ async function listFiles(
     return { stdout: "", stderr, exitCode: stderr ? 2 : 1 };
   }
 
-  // In quiet mode, just indicate success without output
+  // In quiet mode, suppress the file list but preserve diagnostics.
   if (options.quiet) {
-    return { stdout: "", stderr: "", exitCode: 0 };
+    return { stdout: "", stderr, exitCode: 0 };
   }
 
   // Output file list

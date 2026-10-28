@@ -29,6 +29,16 @@ describe("rg empty path operands", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("preserves diagnostics when quiet file listing succeeds", async () => {
+    expect(
+      await createBash().exec('rg --files -q "" visible.txt'),
+    ).toMatchObject({
+      stdout: "",
+      stderr: "rg: : Unable to access path\n",
+      exitCode: 0,
+    });
+  });
+
   it("continues searching other explicit operands after an empty filename", async () => {
     const result = await createBash().exec('rg -n needle "" visible.txt');
     expect(result.stdout).toBe("visible.txt:1:needle\n");
