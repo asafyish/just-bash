@@ -13,6 +13,17 @@ describe("jq ISO date builtin names", () => {
     });
   });
 
+  it("preserves zero-argument user-defined aliases", async () => {
+    const result = await new Bash().exec(
+      "jq -nc 'def fromdateiso8601: 42; def todateiso8601: 7; [fromdateiso8601, todateiso8601]'",
+    );
+    expect(result).toMatchObject({
+      stdout: "[42,7]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("parses ISO dates with fromdateiso8601", async () => {
     const result = await new Bash().exec(
       `jq -n '"2026-05-03T22:28:02Z" | fromdateiso8601'`,
