@@ -1097,12 +1097,11 @@ async function listFiles(
       output.append(file).append(sep);
     }
   }
-  if (options.quiet && found) return { stdout: "", stderr: "", exitCode: 0 };
   const stderr = errors.build();
   return {
     stdout: output.build(),
     stderr: options.noMessages ? "" : stderr,
-    exitCode: stderr ? 2 : found ? 0 : 1,
+    exitCode: options.quiet && found ? 0 : stderr ? 2 : found ? 0 : 1,
   };
 }
 
