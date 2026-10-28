@@ -62,7 +62,7 @@ export function evalDateBuiltin(
 ): QueryValue[] | null {
   if (
     (name === "fromdateiso8601" || name === "todateiso8601") &&
-    args.length !== 0
+    (args.length !== 0 || ctx.funcs?.has(`${name}/0`))
   ) {
     return null;
   }
