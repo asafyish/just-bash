@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("rm", () => {
@@ -44,6 +44,92 @@ describe("rm", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
     expect(result.exitCode).toBe(0);
+  });
+
+  it.each([
+    ["EROFS: read-only file system", "EROFS: read-only file system"],
+    ["EACCES: permission denied", "EACCES: permission denied"],
+    ["ENOTEMPTY: directory not empty", "Directory not empty"],
+    ["EIO: input/output error", "EIO: input/output error"],
+  ])("reports %s with -f and continues removing other operands", async (message, reason) => {
+    const env = new Bash({
+      files: { "/protected.txt": "keep", "/removable.txt": "remove" },
+    });
+    const remove = env.fs.rm.bind(env.fs);
+    vi.spyOn(env.fs, "rm").mockImplementation(async (path, options) => {
+      if (path === "/protected.txt") throw new Error(message);
+      return remove(path, options);
+    });
+
+    const result = await env.exec(
+      "rm -fv /missing.txt /protected.txt /removable.txt",
+    );
+
+    expect(result).toMatchObject({
+      stdout: "removed '/removable.txt'\n",
+      stderr: `rm: cannot remove '/protected.txt': ${reason}\n`,
+      exitCode: 1,
+    });
+    expect(await env.fs.readFile("/protected.txt")).toBe("keep");
+    expect(await env.fs.exists("/removable.txt")).toBe(false);
+  });
+
+  it("reports stat failures other than missing files with -f", async () => {
+    const env = new Bash({ files: { "/protected.txt": "keep" } });
+    const stat = env.fs.stat.bind(env.fs);
+    vi.spyOn(env.fs, "stat").mockImplementation(async (path) => {
+      if (path === "/protected.txt") {
+        throw new Error("EACCES: permission denied");
+      }
+      return stat(path);
+    });
+
+    const result = await env.exec("rm -f /protected.txt");
+
+    expect(result).toMatchObject({
+      stdout: "",
+      stderr: "rm: cannot remove '/protected.txt': EACCES: permission denied\n",
+      exitCode: 1,
+    });
+    expect(await env.fs.readFile("/protected.txt")).toBe("keep");
+  });
+
+  it("does not mistake a path containing ENOENT for a missing-file error", async () => {
+    const env = new Bash({ files: { "/ENOENT.txt": "keep" } });
+    vi.spyOn(env.fs, "rm").mockRejectedValue(
+      Object.assign(new Error("cannot remove /ENOENT.txt"), { code: "EROFS" }),
+    );
+
+    const result = await env.exec("rm -f /ENOENT.txt");
+
+    expect(result).toMatchObject({
+      stdout: "",
+      stderr: "rm: cannot remove '/ENOENT.txt': cannot remove /ENOENT.txt\n",
+      exitCode: 1,
+    });
+    expect(await env.fs.readFile("/ENOENT.txt")).toBe("keep");
+  });
+
+  it("recognizes structured missing-file errors without an errno message", async () => {
+    const env = new Bash();
+    const stat = env.fs.stat.bind(env.fs);
+    vi.spyOn(env.fs, "stat").mockImplementation(async (path) => {
+      if (path === "/missing.txt") {
+        throw Object.assign(new Error("missing file"), { code: "ENOENT" });
+      }
+      return stat(path);
+    });
+
+    expect(await env.exec("rm -f /missing.txt")).toMatchObject({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await env.exec("rm /missing.txt")).toMatchObject({
+      stdout: "",
+      stderr: "rm: cannot remove '/missing.txt': No such file or directory\n",
+      exitCode: 1,
+    });
   });
 
   it("should error when removing directory without -r", async () => {
