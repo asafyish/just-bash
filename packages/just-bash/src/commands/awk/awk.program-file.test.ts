@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
 
 describe("awk program files", () => {
@@ -72,5 +72,19 @@ describe("awk program files", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("input size limit exceeded");
+  });
+  it("rejects a program file before reading beyond the remaining source budget", async () => {
+    const bash = new Bash({
+      files: { "/a.awk": "#".repeat(140), "/b.awk": "#".repeat(140) },
+      executionLimits: { maxStringLength: 200, maxInputBytes: 1000 },
+    });
+    const read = vi.spyOn(bash.fs, "readFile");
+    const result = await bash.exec("awk -f /a.awk -f /b.awk");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toBe(
+      "bash: awk: output size limit exceeded (200 bytes)\n",
+    );
+    expect(read.mock.calls.map(([path]) => path)).toEqual(["/a.awk"]);
   });
 });

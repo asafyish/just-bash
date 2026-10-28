@@ -144,6 +144,7 @@ export const awkCommand2: RuntimeCommand = {
             const stat = await withDefenseContext("program file stat", () =>
               ctx.fs.stat(path),
             );
+            source.reserve(stat.size + 1);
             accountFileInput(ctx, stat.size, "awk program");
             content = await withDefenseContext("program file read", () =>
               ctx.fs.readFile(path),
