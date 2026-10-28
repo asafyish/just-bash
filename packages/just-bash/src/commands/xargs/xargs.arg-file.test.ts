@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Bash } from "../../Bash.js";
+import { ExecutionAbortedError } from "../../interpreter/errors.js";
 
 describe("xargs argument files", () => {
   it.each([
@@ -56,12 +57,42 @@ describe("xargs argument files", () => {
       "xargs: aggregate input size limit exceeded (10 bytes)",
     );
   });
+  it("consumes --help as an argument-file operand", async () => {
+    const bash = new Bash({
+      cwd: "/work",
+      files: { "/work/--help": "one two" },
+    });
+    expect(await bash.exec("xargs -a --help echo")).toMatchObject({
+      stdout: "one two\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+  it("does not recover from an aborted argument-file read", async () => {
+    const bash = new Bash({ files: { "/args": "one" } });
+    vi.spyOn(bash.fs, "readFileBytes").mockRejectedValue(
+      new ExecutionAbortedError(),
+    );
+    const result = await bash.exec("xargs -a /args echo; echo continued");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).not.toBe(0);
+  });
+  it("keeps host filesystem errors out of argument-file diagnostics", async () => {
+    const bash = new Bash();
+    vi.spyOn(bash.fs, "readFileBytes").mockRejectedValue(
+      new Error("ENOENT: open '/home/host/secret'"),
+    );
+    expect(await bash.exec("xargs -a /missing echo")).toMatchObject({
+      stdout: "",
+      stderr: "xargs: /missing: No such file or directory\n",
+      exitCode: 1,
+    });
+  });
   it("reports a missing argument file", async () => {
     const result = await new Bash().exec("xargs -a /missing echo");
     expect(result).toMatchObject({
       stdout: "",
-      stderr:
-        "xargs: /missing: ENOENT: no such file or directory, open '/missing'\n",
+      stderr: "xargs: /missing: No such file or directory\n",
       exitCode: 1,
     });
   });

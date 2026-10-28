@@ -5,16 +5,16 @@ import {
 } from "../../encoding.js";
 import { ExecutionOutputAccumulator } from "../../execution-output.js";
 import type { ExecutionScope } from "../../execution-scope.js";
+import { rethrowFatalExecutionError } from "../../fatal-execution-error.js";
 import { shellJoinArgs } from "../../helpers/shell-quote.js";
 import { ExecutionLimitError } from "../../interpreter/errors.js";
-import { getErrorMessage } from "../../interpreter/helpers/errors.js";
 import type {
   ExecResult,
   RuntimeCommand,
   RuntimeCommandContext,
 } from "../../types.js";
 import { accountFileInput } from "../../utils/file-reader.js";
-import { hasHelpFlag, showHelp, unknownOption } from "../help.js";
+import { showHelp, unknownOption } from "../help.js";
 import { utf8ByteLength } from "../printf/escapes.js";
 
 const xargsHelp = {
@@ -89,10 +89,6 @@ export const xargsCommand: RuntimeCommand = {
     args: string[],
     ctx: RuntimeCommandContext,
   ): Promise<ExecResult> {
-    if (hasHelpFlag(args)) {
-      return showHelp(xargsHelp);
-    }
-
     let argFile: string | null = null;
     let replaceStr: string | null = null;
     let delimiter: string | null = null;
@@ -172,6 +168,8 @@ export const xargsCommand: RuntimeCommand = {
       } else if (arg === "-r" || arg === "--no-run-if-empty") {
         noRunIfEmpty = true;
         commandStart = i + 1;
+      } else if (arg === "--help") {
+        return showHelp(xargsHelp);
       } else if (arg.startsWith("--")) {
         return unknownOption("xargs", arg);
       } else if (arg.startsWith("-") && arg.length > 1) {
@@ -216,10 +214,10 @@ export const xargsCommand: RuntimeCommand = {
         accountFileInput(ctx, latin1FromBytes(content).length, "xargs");
         stdinText = decodeBytesToUtf8(content);
       } catch (error) {
-        if (error instanceof ExecutionLimitError) throw error;
+        rethrowFatalExecutionError(error);
         return {
           stdout: "",
-          stderr: `xargs: ${argFile}: ${getErrorMessage(error)}\n`,
+          stderr: `xargs: ${argFile}: No such file or directory\n`,
           exitCode: 1,
         };
       }
@@ -253,7 +251,7 @@ export const xargsCommand: RuntimeCommand = {
       try {
         items = splitExactBounded(input, delimiter, maxArrayElements);
       } catch (error) {
-        if (error instanceof ExecutionLimitError) throw error;
+        rethrowFatalExecutionError(error);
         return {
           stdout: "",
           stderr: "xargs: delimiter must not be empty\n",
