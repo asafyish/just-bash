@@ -35,4 +35,31 @@ describe("bulk deletion work", () => {
     expect(Object.getPrototypeOf(result)).toBe(null);
     expect(Object.prototype).not.toHaveProperty("polluted");
   });
+  it("deletes reserved own keys without changing prototypes", () => {
+    const input = sanitizeParsedData(
+      JSON.parse(
+        '{"__proto__":1,"constructor":2,"prototype":3,"hasOwnProperty":4,"toString":5,"valueOf":6}',
+      ),
+    );
+    const before = Object.getOwnPropertyDescriptors(Object.prototype);
+    const [result] = evaluate(input, parse("del(.[])"));
+    expect(result).toEqual({});
+    expect(Object.getPrototypeOf(result)).toBe(null);
+    expect(Object.getOwnPropertyDescriptors(Object.prototype)).toEqual(before);
+  });
+
+  it("checks recursive traversal work before reading children", () => {
+    const input = Array(100).fill(null);
+    let reads = 0;
+    Object.defineProperty(input, 0, {
+      get() {
+        reads++;
+        return null;
+      },
+    });
+    expect(() =>
+      evaluate(input, parse("del(..)"), { limits: { maxIterations: 20 } }),
+    ).toThrow(ExecutionLimitError);
+    expect(reads).toBe(0);
+  });
 });

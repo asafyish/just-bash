@@ -1381,7 +1381,11 @@ function deleteResolvedPaths(
   for (const path of paths) {
     chargeQueryWork(ctx);
     const key = path[depth];
-    if (object && (typeof key !== "string" || !isSafeKey(key))) continue;
+    if (
+      object &&
+      (typeof key !== "string" || (path.length > depth + 1 && !isSafeKey(key)))
+    )
+      continue;
     if (!Object.hasOwn(value as object, key)) continue;
     const group = groups.get(key);
     // Deleting a parent supersedes all deletions below it.
@@ -2102,19 +2106,15 @@ function collectPaths(
       chargeQueryWork(ctx);
       appendPath(entry.path);
       if (entry.value && typeof entry.value === "object") {
-        const entries = Array.isArray(entry.value)
-          ? entry.value.map((child, index) => [index, child] as const)
-          : Object.keys(entry.value).map(
-              (key) =>
-                [
-                  key,
-                  // @banned-pattern-ignore: Object.keys returns own properties only
-                  (entry.value as Record<string, unknown>)[key],
-                ] as const,
-            );
-        assertQueryResultCapacity(ctx, 0, stack.length + entries.length);
-        for (let i = entries.length - 1; i >= 0; i--) {
-          const [key, child] = entries[i];
+        const keys = Array.isArray(entry.value)
+          ? null
+          : Object.keys(entry.value);
+        const count = keys ? keys.length : (entry.value as QueryValue[]).length;
+        assertQueryResultCapacity(ctx, 0, stack.length + count);
+        chargeQueryWork(ctx, count * (entry.path.length + 1));
+        for (let i = count - 1; i >= 0; i--) {
+          const key = keys ? keys[i] : i;
+          const child = (entry.value as Record<string | number, unknown>)[key];
           stack.push({ value: child, path: [...entry.path, key] });
         }
       }
