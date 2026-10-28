@@ -330,7 +330,8 @@ function getValueAtPath(
     if (v && typeof v === "object") {
       if (Array.isArray(v)) {
         if (typeof key === "number") {
-          v = v[key < 0 ? v.length + key : key];
+          const index = Math.trunc(key);
+          v = v[index < 0 ? v.length + index : index];
         } else {
           return undefined;
         }
@@ -1919,6 +1920,7 @@ function collectPaths(
   ctx: EvalContext,
   currentPath: (string | number)[],
   paths: (string | number)[][],
+  optional = false,
 ): void {
   chargeQueryWork(ctx);
   if (currentPath.length > ctx.limits.maxDepth) {
@@ -1974,7 +1976,7 @@ function collectPaths(
 
   if (expr.type === "Optional") {
     try {
-      collectPaths(value, expr.expr, ctx, currentPath, paths);
+      collectPaths(value, expr.expr, ctx, currentPath, paths, true);
     } catch (error) {
       if (error instanceof ExecutionLimitError) throw error;
     }
@@ -1985,15 +1987,16 @@ function collectPaths(
     return;
   }
   if ((expr.type === "Field" || expr.type === "Iterate") && expr.base) {
+    const step: AstNode =
+      expr.type === "Field"
+        ? { type: "Field", name: expr.name }
+        : { type: "Iterate" };
     collectPaths(
       value,
       {
         type: "Pipe",
         left: expr.base,
-        right:
-          expr.type === "Field"
-            ? { type: "Field", name: expr.name }
-            : { type: "Iterate" },
+        right: optional ? { type: "Optional", expr: step } : step,
       },
       ctx,
       currentPath,
@@ -2023,7 +2026,11 @@ function collectPaths(
       if (expr.base) collectPaths(value, expr.base, ctx, [], basePaths);
       for (const key of keys) {
         for (const basePath of basePaths) {
-          appendPath(basePath, key);
+          try {
+            appendPath(basePath, key);
+          } catch (error) {
+            if (!optional || error instanceof ExecutionLimitError) throw error;
+          }
         }
       }
       return;
