@@ -2182,7 +2182,7 @@ function collectPaths(
     collectPaths(value, expr.left, ctx, [], leftPaths);
     for (const path of leftPaths) {
       collectPaths(
-        getValueAtPath(value, path),
+        getValueAtPath(value, path) ?? null,
         expr.right,
         ctx,
         [...currentPath, ...path],

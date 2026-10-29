@@ -31,6 +31,23 @@ describe("jq deletion paths", () => {
     });
   });
 
+  it.each([
+    ["{}", "[path(.missing | select(. == null))]", '[["missing"]]\n'],
+    ["[]", "[path(.[3] | nulls)]", "[[3]]\n"],
+    [
+      '{"zero":0,"flag":false,"empty":""}',
+      "[path(.[] | select(. != null))]",
+      '[["zero"],["flag"],["empty"]]\n',
+    ],
+  ])("passes jq values through piped paths on %s", async (input, filter, stdout) => {
+    const bash = new Bash({ files: { "/input.json": input } });
+    expect(await bash.exec(`jq -c '${filter}' /input.json`)).toMatchObject({
+      stdout,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("rejects numeric object keys instead of deleting their string form", async () => {
     const bash = new Bash({ files: { "/input.json": '{"0":1}' } });
     const result = await bash.exec("jq 'del(.[0])' /input.json");
