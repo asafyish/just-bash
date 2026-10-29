@@ -1,6 +1,6 @@
 {
   "name": "just-bash",
-  "version": "3.6.0-yuz.33",
+  "version": "3.6.0-yuz.35",
   "description": "A simulated bash environment with virtual filesystem",
   "repository": {
     "type": "git",
